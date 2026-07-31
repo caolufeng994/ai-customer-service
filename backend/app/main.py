@@ -18,6 +18,33 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     logger.info("Starting AI Customer Service System")
+
+    # Ensure database tables exist (safe no-op if init_db.sql already ran).
+    try:
+        from app.database import init_db
+        init_db()
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+
+    # Optionally seed the knowledge base from seed_docs so the RAG chain is
+    # testable right after startup. Controlled by AUTO_INIT_KB (default off) to
+    # avoid triggering network embeddings on every boot. Idempotent: already
+    # ingested docs are skipped.
+    if settings.auto_init_kb:
+        logger.info("AUTO_INIT_KB enabled -> seeding knowledge base from seed_docs ...")
+        try:
+            from fastapi.concurrency import run_in_threadpool
+            from app.services.init_service import seed_knowledge_base
+            result = await run_in_threadpool(seed_knowledge_base)
+            logger.info(
+                "Knowledge base seeding done: seeded=%d skipped=%d failed=%d",
+                len(result.get("seeded", [])),
+                len(result.get("skipped", [])),
+                len(result.get("failed", [])),
+            )
+        except Exception as e:
+            logger.error(f"Knowledge base auto-seeding failed: {e}")
+
     yield
     logger.info("Shutting down AI Customer Service System")
 
