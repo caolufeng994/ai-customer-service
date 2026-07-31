@@ -1,7 +1,7 @@
 """
 Knowledge base chunk model
 """
-from sqlalchemy import Column, BigInteger, Integer, String, Text, Index, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, BigInteger, Integer, String, Text, DateTime, func, Index, ForeignKey, UniqueConstraint
 from app.database import Base
 
 
@@ -15,6 +15,7 @@ class KbChunk(Base):
     content = Column(Text, nullable=False)
     char_count = Column(Integer, nullable=False)
     vector_id = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
     
     __table_args__ = (
         UniqueConstraint('vector_id', name='uk_vector'),

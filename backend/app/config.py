@@ -46,7 +46,10 @@ class Settings(BaseSettings):
     local_embedding_model: str = "bge-small-zh-v1.5"
     
     # Vector Database
-    chroma_persist_dir: str = "./data/chroma"
+    chroma_persist_dir: str = "D:/data/chroma"
+    
+    # File storage (uploads)
+    upload_dir: str = "D:/data/uploads"
 
     # Knowledge base initialization
     # 设为 true 时，服务启动会自动把 seed_docs 向量化（幂等，已入库的会跳过），

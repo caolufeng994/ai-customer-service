@@ -1,7 +1,7 @@
 """
 Knowledge base document model
 """
-from sqlalchemy import Column, BigInteger, String, Integer, BigInteger as BigInt, Enum, Text, Index
+from sqlalchemy import Column, BigInteger, String, Integer, BigInteger as BigInt, Enum, Text, DateTime, func, Index
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -20,6 +20,7 @@ class KbDocument(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     status = Column(Enum('processing', 'ready', 'failed', 'deleting', name='doc_status'), nullable=False, default="processing")
     error_msg = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
     
     # Relationships
     chunks = relationship("KbChunk", backref="document", cascade="all, delete-orphan")

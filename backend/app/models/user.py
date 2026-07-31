@@ -1,7 +1,7 @@
 """
 User model
 """
-from sqlalchemy import Column, BigInteger, String, Index
+from sqlalchemy import Column, BigInteger, String, DateTime, func, Index
 from app.database import Base
 
 
@@ -14,6 +14,7 @@ class User(Base):
     email = Column(String(255), nullable=True, unique=True, index=True)
     password_hash = Column(String(255), nullable=False)
     salt = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
     
     __table_args__ = (
         Index('uk_phone', 'phone', unique=True),

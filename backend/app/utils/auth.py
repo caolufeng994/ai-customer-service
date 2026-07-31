@@ -5,11 +5,10 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from app.config import settings
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# 直接基于 bcrypt 库做哈希，避免 passlib 与 bcrypt 4.x 的兼容性问题（Python 3.13 环境下常见）
 
 
 def generate_salt() -> str:
@@ -20,14 +19,17 @@ def generate_salt() -> str:
 def hash_password(password: str, salt: str) -> str:
     """Hash password with salt"""
     # Combine password and salt before hashing
-    salted_password = f"{password}{salt}"
-    return pwd_context.hash(salted_password)
+    salted_password = f"{password}{salt}".encode("utf-8")
+    return bcrypt.hashpw(salted_password, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, salt: str, hashed_password: str) -> bool:
     """Verify password against hash"""
-    salted_password = f"{plain_password}{salt}"
-    return pwd_context.verify(salted_password, hashed_password)
+    salted_password = f"{plain_password}{salt}".encode("utf-8")
+    try:
+        return bcrypt.checkpw(salted_password, hashed_password.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

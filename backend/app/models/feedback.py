@@ -1,7 +1,7 @@
 """
 Feedback model
 """
-from sqlalchemy import Column, BigInteger, Integer, Text, Index, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, BigInteger, Integer, Text, DateTime, func, Index, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -15,6 +15,7 @@ class Feedback(Base):
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     rating = Column(Integer, nullable=False)  # 1 for thumbs up, -1 for thumbs down
     comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
     
     __table_args__ = (
         UniqueConstraint('message_id', 'user_id', name='uk_message_user'),

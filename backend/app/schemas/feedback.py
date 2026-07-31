@@ -1,6 +1,7 @@
 """
 Feedback schemas
 """
+from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -19,7 +20,7 @@ class FeedbackResponse(BaseModel):
     user_id: int
     rating: int
     comment: Optional[str]
-    created_at: str
+    created_at: datetime
     
     class Config:
         from_attributes = True

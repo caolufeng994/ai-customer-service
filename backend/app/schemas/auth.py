@@ -1,6 +1,7 @@
 """
 Authentication schemas
 """
+from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
@@ -36,7 +37,7 @@ class UserResponse(BaseModel):
     id: int
     phone: Optional[str]
     email: Optional[str]
-    created_at: str
+    created_at: datetime
     
     class Config:
         from_attributes = True

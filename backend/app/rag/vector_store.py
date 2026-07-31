@@ -30,19 +30,18 @@ class VectorStore:
         self.collection = self._get_or_create_collection()
     
     def _get_or_create_collection(self):
-        """Get or create the Chroma collection"""
-        try:
-            collection = self.client.get_collection(
-                name=self.collection_name,
-                metadata={"description": "Knowledge base embeddings"}
-            )
-            logger.info(f"Loaded existing collection: {self.collection_name}")
-        except:
-            collection = self.client.create_collection(
-                name=self.collection_name,
-                metadata={"description": "Knowledge base embeddings"}
-            )
-            logger.info(f"Created new collection: {self.collection_name}")
+        """Get or create the Chroma collection (幂等, 避免 'already exists' 报错)
+
+        关键：显式指定 hnsw:space=cosine。Chroma 默认使用 L2 距离，而 retriever
+        将 similarity = 1 - distance 当作余弦相似度处理，L2 下该换算会严重低估
+        相似度，导致大量相关片段被阈值过滤（例如多轮追问检索不到）。统一用余弦空间
+        后阈值（默认 0.6）才能按预期工作。
+        """
+        collection = self.client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"description": "Knowledge base embeddings", "hnsw:space": "cosine"}
+        )
+        logger.info(f"Using collection: {self.collection_name} (space=cosine)")
         return collection
     
     def add_embeddings(

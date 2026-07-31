@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from app.models.kb_document import KbDocument
 from app.models.kb_chunk import KbChunk
+from app.config import settings
 from app.schemas.knowledge import DocumentResponse
 from app.rag.loader import DocumentLoader
 from app.rag.splitter import TextSplitter
@@ -33,8 +34,8 @@ class KnowledgeService:
     ) -> KbDocument:
         """Create a document record in processing state"""
         # Generate unique file path
-        upload_dir = Path("uploads")
-        upload_dir.mkdir(exist_ok=True)
+        upload_dir = Path(settings.upload_dir)
+        upload_dir.mkdir(parents=True, exist_ok=True)
         
         file_ext = file_type
         unique_filename = f"{uuid.uuid4()}.{file_ext}"

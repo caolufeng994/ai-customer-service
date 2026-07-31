@@ -1,7 +1,7 @@
 """
 Usage quota model
 """
-from sqlalchemy import Column, BigInteger, Integer, Date, UniqueConstraint, ForeignKey
+from sqlalchemy import Column, BigInteger, Integer, Date, DateTime, func, UniqueConstraint, ForeignKey
 from app.database import Base
 
 
@@ -13,6 +13,7 @@ class UsageQuota(Base):
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
     ask_count = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=True)
     
     __table_args__ = (
         UniqueConstraint('user_id', 'date', name='uk_user_date'),

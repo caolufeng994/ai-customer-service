@@ -74,8 +74,12 @@ class LLMClient:
                 # Streaming mode - collect chunks
                 full_response = ""
                 for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        full_response += chunk.choices[0].delta.content
+                    # Guard against empty choices (final usage/[DONE] chunk has choices == [])
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        full_response += delta.content
                 return full_response
             else:
                 return response.choices[0].message.content
@@ -111,9 +115,13 @@ class LLMClient:
             )
             
             for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-                    
+                # Guard against empty choices (final usage/[DONE] chunk has choices == [])
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+
         except Exception as e:
             logger.error(f"LLM chat stream failed: {e}")
             raise

@@ -1,7 +1,7 @@
 """
 Session model
 """
-from sqlalchemy import Column, BigInteger, String, Integer, Index, ForeignKey
+from sqlalchemy import Column, BigInteger, String, Integer, DateTime, func, Index, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -15,6 +15,8 @@ class Session(Base):
     title = Column(String(255), nullable=False, default="新对话")
     intent_tag = Column(String(50), nullable=True)
     msg_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=True)
     
     # Relationships
     user = relationship("User", backref="sessions")

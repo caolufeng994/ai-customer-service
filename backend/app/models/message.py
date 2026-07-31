@@ -1,7 +1,7 @@
 """
 Message model
 """
-from sqlalchemy import Column, BigInteger, String, Integer, Text, Enum, Index, ForeignKey
+from sqlalchemy import Column, BigInteger, String, Integer, Text, Enum, DateTime, func, Index, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -19,6 +19,7 @@ class Message(Base):
     token_out = Column(Integer, nullable=False, default=0)
     latency_ms = Column(Integer, nullable=False, default=0)
     finish_reason = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
     
     # Relationships
     citations = relationship("MessageCitation", backref="message", cascade="all, delete-orphan")

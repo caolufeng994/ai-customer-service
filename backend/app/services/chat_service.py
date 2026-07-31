@@ -207,7 +207,16 @@ class ChatService:
         try:
             # Retrieve (use singleton)
             retriever = get_retriever()
-            retrieval_results = retriever.retrieve_with_fallback(request.message, request.kb_id)
+
+            # 多轮对话检索优化：当前问题若过短/含指代（如"那会员折扣呢？"），
+            # 直接拿原句去向量检索容易因代词缺失而召回失败。这里用上一轮用户
+            # 问题做检索_query 改写，提升追问场景的召回率。
+            retrieval_query = request.message
+            user_turns = [m.get("content", "") for m in history if m.get("role") == "user"]
+            if len(user_turns) >= 2 and len(request.message) < 20:
+                retrieval_query = f"{user_turns[-2]} {request.message}"
+
+            retrieval_results = retriever.retrieve_with_fallback(retrieval_query, request.kb_id)
 
             # Build context (use singleton)
             context_builder = get_context_builder()
