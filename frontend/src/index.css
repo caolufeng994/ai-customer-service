@@ -1,0 +1,35 @@
+@import 'antd/dist/reset.css';
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.sider-header {
+  padding: 16px;
+}
+
+.content-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.messages-container {
+  margin-bottom: 24px;
+  height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.messages-container .ant-card {
+  margin-bottom: 16px;
+}
+
+.messages-container p {
+  margin-top: 8px;
+  white-space: pre-wrap;
+}

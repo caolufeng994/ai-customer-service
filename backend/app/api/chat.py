@@ -1,0 +1,38 @@
+"""
+Chat API endpoints with SSE streaming
+"""
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.schemas.chat import ChatRequest
+from app.services.chat_service import ChatService
+from app.utils.dependencies import get_current_user
+from app.models.user import User
+from app.core.exceptions import BaseAppException
+
+router = APIRouter()
+
+
+@router.post("/stream")
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Stream chat response using RAG pipeline
+    Returns SSE (Server-Sent Events) stream
+    """
+    try:
+        return StreamingResponse(
+            ChatService.chat_stream(db, current_user.id, request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    except BaseAppException as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
