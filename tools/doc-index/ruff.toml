@@ -1,0 +1,12 @@
+# 对齐《代码规范》第 5 节：后端 ruff 配置（行宽 100，启用 E/F/I/N/W/UP）
+line-length = 100
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

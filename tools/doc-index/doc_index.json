@@ -1,0 +1,336 @@
+{
+  "version": "1.0",
+  "project": "5day-AI智能客服系统（RAG）",
+  "description": "AI 客服 RAG 后端（FastAPI + Chroma + DashScope）。本索引供 agent 按任务精准定位需读取的源码与文档，避免盲目加载全部文件。路径相对项目根 C:/Users/25837/Desktop/5day。",
+  "files": [
+    {
+      "path": "backend/app/config.py",
+      "category": "config",
+      "description": "全局配置：数据库连接、Chroma 持久化目录、上传目录、DashScope API Key/模型、JWT 密钥、CORS。",
+      "use_cases": ["修改数据库连接配置", "调整向量库或上传路径", "配置大模型 Key 与模型名", "设置 JWT 密钥/CORS"],
+      "keywords": ["config", "配置", "数据库", "chroma", "dashscope", "jwt", "cors", "settings"]
+    },
+    {
+      "path": "backend/app/database.py",
+      "category": "config",
+      "description": "SQLAlchemy 引擎与会话工厂，提供 get_db 依赖，绑定 MySQL。",
+      "use_cases": ["排查数据库连接问题", "理解 ORM 会话注入方式", "数据库表自动创建"],
+      "keywords": ["database", "sqlalchemy", "engine", "session", "get_db", "mysql"]
+    },
+    {
+      "path": "backend/app/main.py",
+      "category": "entry",
+      "description": "FastAPI 应用入口：注册路由、CORS、统一异常处理、启动事件、Swagger/ReDoc 文档。",
+      "use_cases": ["新增/调整 API 路由前缀", "配置 CORS 或启动钩子", "查看接口文档地址", "全局异常处理入口"],
+      "keywords": ["main", "fastapi", "app", "router", "cors", "startup", "docs", "入口"]
+    },
+    {
+      "path": "backend/app/core/response.py",
+      "category": "core",
+      "description": "统一响应封装（成功/失败结构）与 APIResponse 辅助函数。",
+      "use_cases": ["统一接口返回格式", "构造标准响应体"],
+      "keywords": ["response", "响应", "统一返回", "apiresponse"]
+    },
+    {
+      "path": "backend/app/core/exceptions.py",
+      "category": "core",
+      "description": "自定义业务异常类（如认证失败、资源不存在）。",
+      "use_cases": ["新增业务异常类型", "理解错误码体系"],
+      "keywords": ["exception", "异常", "错误", "business"]
+    },
+    {
+      "path": "backend/app/core/exception_handlers.py",
+      "category": "core",
+      "description": "全局异常处理器，将异常转为统一 JSON 错误响应。",
+      "use_cases": ["调整错误响应格式", "排查 500/401 响应来源"],
+      "keywords": ["exception_handler", "异常处理", "错误响应", "handler"]
+    },
+    {
+      "path": "backend/app/core/logging.py",
+      "category": "core",
+      "description": "日志配置与 get_logger 工厂。",
+      "use_cases": ["调整日志级别/格式", "在模块中获取 logger"],
+      "keywords": ["logging", "日志", "logger"]
+    },
+    {
+      "path": "backend/app/models/base.py",
+      "category": "model",
+      "description": "SQLAlchemy 声明基类 Base 与时间戳混入。",
+      "use_cases": ["新增 ORM 模型", "理解模型基类"],
+      "keywords": ["base", "model", "基类", "declarative"]
+    },
+    {
+      "path": "backend/app/models/user.py",
+      "category": "model",
+      "description": "用户表：id、手机号、邮箱、密码哈希、salt、创建时间。",
+      "use_cases": ["查看用户字段", "修改注册/登录数据结构", "理解密码哈希存储"],
+      "keywords": ["user", "用户", "密码", "salt", "password_hash", "手机号", "邮箱"]
+    },
+    {
+      "path": "backend/app/models/session.py",
+      "category": "model",
+      "description": "会话表：用户、标题、创建/更新时间，含最近更新索引。",
+      "use_cases": ["管理会话列表", "查看会话模型字段"],
+      "keywords": ["session", "会话", "对话", "created_at", "updated_at"]
+    },
+    {
+      "path": "backend/app/models/message.py",
+      "category": "model",
+      "description": "消息表：会话、角色(user/assistant)、内容、创建时间。",
+      "use_cases": ["查看消息结构", "多轮对话历史存储", "聊天记录持久化"],
+      "keywords": ["message", "消息", "对话历史", "role", "assistant", "user"]
+    },
+    {
+      "path": "backend/app/models/message_citation.py",
+      "category": "model",
+      "description": "消息引用来源表：关联消息与知识块，记录出处。",
+      "use_cases": ["查看引用来源结构", "理解 RAG 引用落库"],
+      "keywords": ["citation", "引用", "来源", "出处", "message_citation"]
+    },
+    {
+      "path": "backend/app/models/kb_document.py",
+      "category": "model",
+      "description": "知识库文档表：文件名、状态(processing/ready/failed)、块数、创建时间。",
+      "use_cases": ["查看文档上传状态", "知识库管理数据结构", "排查向量化状态"],
+      "keywords": ["kb_document", "知识库", "文档", "status", "ready", "processing"]
+    },
+    {
+      "path": "backend/app/models/kb_chunk.py",
+      "category": "model",
+      "description": "知识块表：文档ID、块序号、内容、向量ID、创建时间。",
+      "use_cases": ["查看切块存储结构", "理解文本分块落库"],
+      "keywords": ["kb_chunk", "知识块", "chunk", "切块", "向量"]
+    },
+    {
+      "path": "backend/app/models/feedback.py",
+      "category": "model",
+      "description": "用户反馈表：关联会话/消息、评分、内容、创建时间。",
+      "use_cases": ["查看反馈结构", "实现点赞/点踩功能"],
+      "keywords": ["feedback", "反馈", "评分", "点赞", "点踩"]
+    },
+    {
+      "path": "backend/app/models/usage_quota.py",
+      "category": "model",
+      "description": "用量配额表：用户每日调用次数与更新时间。",
+      "use_cases": ["实现每日限流", "查看调用次数统计"],
+      "keywords": ["usage_quota", "配额", "限流", "每日次数", "quota"]
+    },
+    {
+      "path": "backend/app/rag/loader.py",
+      "category": "rag",
+      "description": "文档加载器：读取 txt/md 等文本文件内容。",
+      "use_cases": ["支持新文档格式", "排查文件读取", "知识库文件加载", "RAG 文档加载"],
+      "keywords": ["loader", "加载", "文档读取", "file", "txt", "md", "rag"]
+    },
+    {
+      "path": "backend/app/rag/splitter.py",
+      "category": "rag",
+      "description": "文本分块器：按长度/重叠切分为语义块。",
+      "use_cases": ["调整切块大小与重叠", "优化检索粒度", "分块策略", "RAG 文本切块"],
+      "keywords": ["splitter", "分块", "chunk", "切块", "切分", "overlap", "rag"]
+    },
+    {
+      "path": "backend/app/rag/embedder.py",
+      "category": "rag",
+      "description": "向量化封装：调用 DashScope embedding 生成 1024 维向量，含批量与异常兜底。",
+      "use_cases": ["切换 embedding 模型", "排查向量化 401/零向量", "批量嵌入文本", "RAG 向量化"],
+      "keywords": ["embedder", "embedding", "向量化", "dashscope", "向量", "1024", "rag"]
+    },
+    {
+      "path": "backend/app/rag/vector_store.py",
+      "category": "rag",
+      "description": "Chroma 向量库封装：幂等获取集合（cosine 空间）、增删、相似查询。",
+      "use_cases": ["排查 collection already exists", "调整距离度量(cosine/l2)", "向量增删查", "相似检索", "实现 RAG 检索问答"],
+      "keywords": ["vector_store", "chroma", "向量库", "collection", "cosine", "相似查询", "get_or_create", "rag", "检索"]
+    },
+    {
+      "path": "backend/app/rag/retriever.py",
+      "category": "rag",
+      "description": "检索器：依据查询向量从 Chroma 召回文本块，带双阈值兜底与多轮上下文拼接。",
+      "use_cases": ["实现 RAG 检索", "调整检索阈值/兜底", "多轮上下文拼接", "提升代词追问命中"],
+      "keywords": ["retriever", "检索", "RAG", "召回", "相似度", "阈值", "兜底", "多轮"]
+    },
+    {
+      "path": "backend/app/rag/context_builder.py",
+      "category": "rag",
+      "description": "上下文构造：将检索到的文本块拼为喂给 LLM 的上下文。",
+      "use_cases": ["调整上下文拼接格式", "控制上下文长度", "引用来源组织", "RAG 上下文拼接"],
+      "keywords": ["context_builder", "上下文", "拼接", "context", "引用", "rag"]
+    },
+    {
+      "path": "backend/app/rag/prompt_builder.py",
+      "category": "rag",
+      "description": "提示词构造：组装系统提示与含知识上下文的用户提示。",
+      "use_cases": ["修改系统提示词", "调整 RAG 提示模板", "控制回答风格/约束", "RAG 问答提示组装"],
+      "keywords": ["prompt_builder", "提示词", "prompt", "system", "模板", "rag", "问答"]
+    },
+    {
+      "path": "backend/app/rag/llm_client.py",
+      "category": "rag",
+      "description": "LLM 客户端：封装 DashScope 对话（流式/非流式），解析 SSE 分片、处理空 choices 与兜底。",
+      "use_cases": ["修复聊天流式崩溃", "切换大模型", "处理流式输出/兜底", "排查 LLM 401", "实现 RAG 问答生成"],
+      "keywords": ["llm_client", "llm", "流式", "stream", "dashscope", "chat", "sse", "兜底", "rag", "问答"]
+    },
+    {
+      "path": "backend/app/services/auth_service.py",
+      "category": "service",
+      "description": "认证服务：注册（生成 salt+bcrypt 哈希）、登录（校验并签发 JWT）、获取当前用户。",
+      "use_cases": ["修复登录密码校验", "实现注册逻辑", "JWT 签发/校验", "密码哈希验证"],
+      "keywords": ["auth_service", "登录", "注册", "密码", "jwt", "认证", "bcrypt", "token"]
+    },
+    {
+      "path": "backend/app/services/chat_service.py",
+      "category": "service",
+      "description": "聊天服务：编排 RAG 流水线（检索→上下文→提示→LLM），流式返回并落库消息与引用。",
+      "use_cases": ["实现 RAG 问答接口", "排查助手消息丢失", "多轮对话编排", "引用来源保存"],
+      "keywords": ["chat_service", "聊天", "RAG问答", "流水线", "流式", "多轮", "引用"]
+    },
+    {
+      "path": "backend/app/services/knowledge_service.py",
+      "category": "service",
+      "description": "知识库服务：上传文档、异步切块向量化（落库 chunk）、删除文档与向量。",
+      "use_cases": ["实现知识库上传", "排查向量化失败", "删除文档清理向量", "异步任务"],
+      "keywords": ["knowledge_service", "知识库", "上传", "向量化", "删除", "异步", "document"]
+    },
+    {
+      "path": "backend/app/services/session_service.py",
+      "category": "service",
+      "description": "会话服务：创建、列出、获取详情（含消息）、删除会话。",
+      "use_cases": ["实现会话管理", "查看会话消息历史", "删除会话"],
+      "keywords": ["session_service", "会话", "列表", "详情", "删除", "history"]
+    },
+    {
+      "path": "backend/app/services/feedback_service.py",
+      "category": "service",
+      "description": "反馈服务：提交与查询用户对回答的反馈。",
+      "use_cases": ["实现反馈提交", "查看反馈统计"],
+      "keywords": ["feedback_service", "反馈", "评分", "点赞", "点踩"]
+    },
+    {
+      "path": "backend/app/services/init_service.py",
+      "category": "service",
+      "description": "初始化服务：自动建库、灌入种子知识、初始化配额等。",
+      "use_cases": ["首次启动初始化", "灌入默认知识库", "环境重置"],
+      "keywords": ["init_service", "初始化", "建库", "种子", "seed"]
+    },
+    {
+      "path": "backend/app/api/auth.py",
+      "category": "api",
+      "description": "认证路由：/api/auth/register、/login、/me。",
+      "use_cases": ["调试登录/注册接口", "修改认证路由", "查看请求字段(phone_or_email)"],
+      "keywords": ["api_auth", "登录接口", "注册接口", "auth", "router", "phone_or_email"]
+    },
+    {
+      "path": "backend/app/api/chat.py",
+      "category": "api",
+      "description": "聊天路由：/api/chat 流式 SSE 问答，校验配额、限流。",
+      "use_cases": ["实现聊天接口", "排查 SSE 流", "限流逻辑", "配额校验"],
+      "keywords": ["api_chat", "聊天接口", "sse", "流式", "chat", "router", "限流"]
+    },
+    {
+      "path": "backend/app/api/knowledge.py",
+      "category": "api",
+      "description": "知识库路由：/api/kb 上传、列表、删除、查询状态。",
+      "use_cases": ["调试知识库上传", "查看文档列表/状态", "删除文档接口"],
+      "keywords": ["api_kb", "知识库接口", "上传接口", "kb", "router", "上传"]
+    },
+    {
+      "path": "backend/app/api/session.py",
+      "category": "api",
+      "description": "会话路由：/api/sessions 创建、列表、详情、删除。",
+      "use_cases": ["调试会话接口", "获取会话消息详情", "会话管理路由"],
+      "keywords": ["api_session", "会话接口", "sessions", "router", "详情"]
+    },
+    {
+      "path": "backend/app/api/feedback.py",
+      "category": "api",
+      "description": "反馈路由：/api/feedback 提交与查询。",
+      "use_cases": ["调试反馈接口", "提交用户评价"],
+      "keywords": ["api_feedback", "反馈接口", "feedback", "router"]
+    },
+    {
+      "path": "backend/app/schemas/auth.py",
+      "category": "schema",
+      "description": "认证 Pydantic 模型：注册/登录请求、用户响应（datetime 类型）。",
+      "use_cases": ["修改登录请求字段", "理解响应结构", "修复 datetime 校验"],
+      "keywords": ["schema_auth", "pydantic", "登录请求", "用户响应", "datetime"]
+    },
+    {
+      "path": "backend/app/schemas/chat.py",
+      "category": "schema",
+      "description": "聊天 Pydantic 模型：问答请求/流式事件结构。",
+      "use_cases": ["修改聊天请求参数", "理解 SSE 事件格式"],
+      "keywords": ["schema_chat", "pydantic", "聊天请求", "事件", "event"]
+    },
+    {
+      "path": "backend/app/schemas/knowledge.py",
+      "category": "schema",
+      "description": "知识库 Pydantic 模型：上传/文档响应。",
+      "use_cases": ["调整上传字段", "理解文档响应"],
+      "keywords": ["schema_knowledge", "pydantic", "上传", "文档响应"]
+    },
+    {
+      "path": "backend/app/schemas/session.py",
+      "category": "schema",
+      "description": "会话 Pydantic 模型：会话创建/响应、消息响应。",
+      "use_cases": ["调整会话响应结构", "消息序列化"],
+      "keywords": ["schema_session", "pydantic", "会话响应", "消息响应"]
+    },
+    {
+      "path": "backend/app/schemas/feedback.py",
+      "category": "schema",
+      "description": "反馈 Pydantic 模型：反馈请求/响应（datetime 类型）。",
+      "use_cases": ["修改反馈字段", "修复 datetime 校验"],
+      "keywords": ["schema_feedback", "pydantic", "反馈", "datetime"]
+    },
+    {
+      "path": "backend/app/utils/auth.py",
+      "category": "utils",
+      "description": "密码工具：bcrypt 直接哈希与校验（已替代 passlib）、JWT 编解码。",
+      "use_cases": ["排查密码哈希不兼容", "理解 bcrypt 用法", "JWT 生成/验证", "加盐哈希"],
+      "keywords": ["utils_auth", "bcrypt", "hash_password", "verify_password", "jwt", "密码", "加盐"]
+    },
+    {
+      "path": "backend/app/utils/dependencies.py",
+      "category": "utils",
+      "description": "FastAPI 依赖：从 Authorization 解析当前用户、注入 db 等。",
+      "use_cases": ["理解鉴权依赖注入", "修改 token 解析", "依赖注入 db"],
+      "keywords": ["dependencies", "依赖注入", "get_current_user", "token", "鉴权"]
+    },
+    {
+      "path": "docs/API文档.md",
+      "category": "doc",
+      "description": "人工整理的 API 参考：全部接口路径、请求/响应、示例。",
+      "use_cases": ["查看接口文档", "对接前端字段", "理解路由契约"],
+      "keywords": ["api文档", "接口文档", "api reference", "接口"]
+    },
+    {
+      "path": "docs/AI架构设计.md",
+      "category": "doc",
+      "description": "系统架构设计：RAG 八模块流水线、组件关系图。",
+      "use_cases": ["理解整体架构", "RAG 流水线设计", "模块划分"],
+      "keywords": ["架构", "architecture", "RAG流水线", "设计"]
+    },
+    {
+      "path": "docs/业务流程说明.md",
+      "category": "doc",
+      "description": "核心业务流程说明：注册/登录、知识库管理、RAG 问答、反馈。",
+      "use_cases": ["理解业务流程", "梳理端到端链路", "需求对照"],
+      "keywords": ["业务流程", "流程", "业务", "链路"]
+    },
+    {
+      "path": "docs/数据库设计.md",
+      "category": "doc",
+      "description": "数据库表结构设计与字段说明。",
+      "use_cases": ["查看表结构", "数据库建模", "字段含义"],
+      "keywords": ["数据库", "表结构", "schema", "ddl", "设计"]
+    },
+    {
+      "path": "docs/需求符合性检查报告.md",
+      "category": "doc",
+      "description": "需求逐条符合性核查报告（功能点对照）。",
+      "use_cases": ["核对需求覆盖", "验收检查", "功能清单"],
+      "keywords": ["需求", "符合性", "验收", "检查报告", "requirement"]
+    }
+  ]
+}
