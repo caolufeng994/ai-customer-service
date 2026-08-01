@@ -15,6 +15,7 @@ from app.rag.context_builder import ContextBuilder
 from app.rag.prompt_builder import PromptBuilder
 from app.rag.llm_client import LLMClient
 from app.core.exceptions import ValidationError, QuotaExceededError
+from app.config import settings
 from datetime import date
 import logging
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 @lru_cache(maxsize=1)
 def get_retriever():
     """Get singleton retriever instance"""
-    return Retriever(top_k=8, similarity_threshold=0.6)
+    return Retriever(top_k=settings.retrieval_top_k, similarity_threshold=settings.retrieval_threshold)
 
 
 @lru_cache(maxsize=1)
@@ -64,9 +65,9 @@ class ChatService:
             db.add(quota)
             db.commit()
         
-        # Check quota limit (default 100 per day)
-        if quota.ask_count >= 100:
-            raise QuotaExceededError("Daily quota exceeded (100 questions per day)")
+        # Check quota limit (from settings)
+        if quota.ask_count >= settings.daily_quota_limit:
+            raise QuotaExceededError(f"Daily quota exceeded ({settings.daily_quota_limit} questions per day)")
     
     @staticmethod
     def increment_quota(db: Session, user_id: int) -> None:
@@ -86,8 +87,10 @@ class ChatService:
             db.commit()
     
     @staticmethod
-    def get_conversation_history(db: Session, session_id: int, limit: int = 10) -> List[dict]:
+    def get_conversation_history(db: Session, session_id: int) -> List[dict]:
         """Get recent conversation history"""
+        # Calculate limit based on max_history_rounds (each round = 2 messages: user + assistant)
+        limit = settings.max_history_rounds * 2
         messages = db.query(Message).filter(
             Message.session_id == session_id
         ).order_by(Message.created_at.desc()).limit(limit).all()
@@ -186,9 +189,9 @@ class ChatService:
         start_time = time.time()
         
         # Step 1: Validate and check quota
-        if len(request.message) > 500:
-            raise ValidationError("Message too long (max 500 characters)")
-        
+        if len(request.message) > settings.max_question_length:
+            raise ValidationError(f"Message too long (max {settings.max_question_length} characters)")
+
         ChatService.check_quota(db, user_id)
         
         # Step 2: Get or create session
@@ -242,20 +245,11 @@ class ChatService:
                     full_response += chunk
                     yield f"data: {ChatService._format_sse_event('content', chunk)}\n\n"
             except Exception as llm_error:
-                logger.warning(f"Primary LLM failed, falling back to Ollama: {llm_error}")
-                yield f"data: {ChatService._format_sse_event('status', 'switching_to_local_model')}\n\n"
-                
-                # Fallback to Ollama
-                try:
-                    fallback_client = llm_client.fallback_to_ollama()
-                    full_response = ""
-                    for chunk in fallback_client.chat_stream(messages, temperature=0.7, max_tokens=1000):
-                        full_response += chunk
-                        yield f"data: {ChatService._format_sse_event('content', chunk)}\n\n"
-                    finish_reason = "stop_fallback"
-                except Exception as fallback_error:
-                    logger.error(f"Fallback LLM also failed: {fallback_error}")
-                    raise
+                logger.error(f"LLM generation failed: {llm_error}")
+                # Graceful degradation: yield error message instead of raising
+                full_response = "抱歉，服务暂时不可用，请稍后重试。"
+                finish_reason = "error"
+                yield f"data: {ChatService._format_sse_event('content', full_response)}\n\n"
             
             latency_ms = int((time.time() - start_time) * 1000)
             

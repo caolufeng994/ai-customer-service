@@ -3,7 +3,6 @@ Vector Store Module
 Handles vector database operations using Chroma
 """
 import chromadb
-from chromadb.config import Settings
 from typing import List, Dict, Any, Optional
 import logging
 from app.config import settings

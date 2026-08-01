@@ -3,39 +3,38 @@ Application Configuration Module
 Loads settings from environment variables and .env file
 """
 from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
 from typing import List
 
 
 class Settings(BaseSettings):
     """Application settings"""
-    
+
     # Application
     app_name: str = "AI Customer Service"
     app_version: str = "1.0.0"
-    debug: bool = True
+    debug: bool = False
     log_level: str = "INFO"
-    
+
     # Database
     db_host: str = "localhost"
     db_port: int = 3306
     db_name: str = "ai_customer_service"
     db_user: str = "root"
-    db_password: str = ""
-    
+    db_password: str = Field(..., min_length=1, description="Database password (required)")
+
     @property
     def database_url(self) -> str:
         return f"mysql+pymysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
-    
+
     # JWT
-    jwt_secret_key: str = "your-secret-key-change-this"
+    jwt_secret_key: str = Field(..., min_length=32, description="JWT secret key (required, min 32 chars)")
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 24
     
     # LLM
-    llm_provider: str = "dashscope"  # dashscope or ollama
+    llm_provider: str = "dashscope"  # currently only dashscope (cloud) is supported
     dashscope_api_key: str = ""
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:7b"
     # DashScope 对话模型（较新推荐：qwen3.7-max / qwen3.7-plus / qwen3.7-flash）
     dashscope_model: str = "qwen3.7-plus"
 
@@ -69,6 +68,15 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 8
     retrieval_threshold: float = 0.35
     max_history_rounds: int = 3
+
+    # Rate Limiting
+    global_rate_limit: str = "100/minute"  # Global RPS limit
+    ip_rate_limit: str = "30/minute"  # Per-IP RPS limit
+
+    # Reranker Configuration
+    enable_reranker: bool = False  # Enable reranking for better retrieval
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"  # Reranker model
+    retrieval_recall_k: int = 20  # Recall top-k before reranking
     
     class Config:
         env_file = ".env"

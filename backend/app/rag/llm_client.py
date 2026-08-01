@@ -1,6 +1,6 @@
 """
 LLM Client Module
-Abstraction for LLM providers (DashScope and Ollama)
+Abstraction for LLM providers (DashScope)
 """
 from typing import Iterator, Optional, List
 from openai import OpenAI
@@ -21,22 +21,18 @@ class LLMClient:
         Initialize LLM client
         
         Args:
-            provider: LLM provider (dashscope or ollama). Uses config default if None
+            provider: LLM provider (dashscope). Uses config default if None
         """
         self.provider = provider or settings.llm_provider
         
         if self.provider == "dashscope":
             self.client = OpenAI(
                 api_key=settings.dashscope_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                timeout=30.0,
+                max_retries=2
             )
             self.model = settings.dashscope_model
-        elif self.provider == "ollama":
-            self.client = OpenAI(
-                base_url=settings.ollama_base_url,
-                api_key="ollama"  # Ollama doesn't require real API key
-            )
-            self.model = settings.ollama_model
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider}")
         
@@ -126,12 +122,3 @@ class LLMClient:
             logger.error(f"LLM chat stream failed: {e}")
             raise
     
-    def fallback_to_ollama(self) -> 'LLMClient':
-        """
-        Fallback to Ollama if primary provider fails
-        
-        Returns:
-            New LLM client with Ollama provider
-        """
-        logger.warning("Falling back to Ollama")
-        return LLMClient(provider="ollama")

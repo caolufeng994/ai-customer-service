@@ -31,7 +31,9 @@ class Embedder:
         if self.provider == "dashscope":
             self.client = OpenAI(
                 api_key=settings.dashscope_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                timeout=30.0,
+                max_retries=2
             )
         elif self.provider == "local":
             try:
@@ -88,9 +90,8 @@ class Embedder:
                     logger.debug(f"Embedded batch {i//batch_size + 1}: {len(batch)} texts")
                 except Exception as e:
                     logger.error(f"Failed to embed batch: {e}")
-                    # Return empty vectors for failed batch
-                    all_embeddings.extend([[0.0] * 1024 for _ in batch])
-        
+                    raise RuntimeError(f"Embedding service unavailable: {e}")
+
         elif self.provider == "local":
             # Local embedding with sentence-transformers
             try:
@@ -104,7 +105,7 @@ class Embedder:
                 logger.debug(f"Embedded {len(texts)} texts with local model")
             except Exception as e:
                 logger.error(f"Failed to embed with local model: {e}")
-                all_embeddings = [[0.0] * 768 for _ in texts]  # Default to 768 for local models
+                raise RuntimeError(f"Local embedding service unavailable: {e}")
         
         return all_embeddings
     

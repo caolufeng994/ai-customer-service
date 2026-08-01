@@ -140,26 +140,39 @@ export default function KnowledgeBase() {
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
-      <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Knowledge Base</h2>
-        <Upload
-          fileList={fileList}
-          onChange={({ fileList }) => setFileList(fileList)}
-          beforeUpload={() => false}
-          accept=".txt,.md,.pdf"
-        >
-          <Button icon={<UploadOutlined />}>Select File</Button>
-        </Upload>
-        <Button type="primary" onClick={handleUpload} disabled={fileList.length === 0}>
-          Upload
-        </Button>
+    <div className="kb-page">
+      <div className="kb-header">
+        <div>
+          <h2>Knowledge Base</h2>
+          <p className="kb-subtitle">Manage your documents for AI-powered responses</p>
+        </div>
+        <div className="kb-actions">
+          <Upload
+            fileList={fileList}
+            onChange={({ fileList }) => setFileList(fileList)}
+            beforeUpload={() => false}
+            accept=".txt,.md,.pdf"
+          >
+            <Button icon={<UploadOutlined />} size="large">
+              Select File
+            </Button>
+          </Upload>
+          <Button
+            type="primary"
+            onClick={handleUpload}
+            disabled={fileList.length === 0}
+            size="large"
+          >
+            Upload
+          </Button>
+        </div>
       </div>
       <Table
         columns={columns}
         dataSource={documents}
         rowKey="id"
         loading={loading}
+        pagination={{ pageSize: 10 }}
       />
     </div>
   )

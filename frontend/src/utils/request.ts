@@ -61,12 +61,13 @@ export async function postStream(
     onError?: (error: Error) => void
     onDone?: () => void
     headers?: Record<string, string>
+    signal?: AbortSignal
   } = {}
 ) {
-  const { onEvent, onError, onDone, headers: customHeaders } = options
-  const token = localStorage.getItem('token')
-  
+  const { onEvent, onError, onDone, headers: customHeaders, signal } = options
   const controller = new AbortController()
+  const abortSignal = signal ?? controller.signal
+  const token = localStorage.getItem('token')
   
   try {
     const response = await fetch(`/api${url}`, {
@@ -77,7 +78,7 @@ export async function postStream(
         ...customHeaders,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: abortSignal,
     })
     
     if (!response.ok) {
@@ -123,6 +124,9 @@ export async function postStream(
     
     onDone?.()
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return
+    }
     onError?.(error as Error)
   }
   

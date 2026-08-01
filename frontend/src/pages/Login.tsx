@@ -29,40 +29,40 @@ export default function Login() {
   }
 
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-    }}>
+    <div className="login-page">
       <Card
         title="AI Customer Service"
-        style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}
+        className="login-card"
       >
+        <div className="login-subtitle">
+          <p>Welcome back! Please login to continue</p>
+        </div>
         <Form
           name="login"
           onFinish={onFinish}
           autoComplete="off"
+          layout="vertical"
         >
           <Form.Item
+            label="Phone or Email"
             name="phone"
             rules={[{ required: true, message: 'Please input your phone or email!' }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="Phone or Email"
+              placeholder="Enter your phone or email"
               size="large"
             />
           </Form.Item>
 
           <Form.Item
+            label="Password"
             name="password"
             rules={[{ required: true, message: 'Please input your password!' }]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="Password"
+              placeholder="Enter your password"
               size="large"
             />
           </Form.Item>

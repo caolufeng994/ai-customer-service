@@ -36,14 +36,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT UNSIGNED NOT NULL,
     title VARCHAR(255) NOT NULL DEFAULT '新对话',
-    intent_tag VARCHAR(50) NULL COMMENT 'Intent classification: product_consult/after_sale/chat/complaint',
+    -- intent_tag field deprecated - single intent RAG design, see AI架构设计.md
+    -- intent_tag VARCHAR(50) NULL COMMENT 'Intent classification: product_consult/after_sale/chat/complaint',
     msg_count INT UNSIGNED DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    
+
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    INDEX idx_user_updated (user_id, updated_at DESC),
-    INDEX idx_intent (intent_tag)
+    INDEX idx_user_updated (user_id, updated_at DESC)
+    -- INDEX idx_intent (intent_tag) -- deprecated
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT 'Chat sessions table';
 
@@ -56,13 +57,14 @@ CREATE TABLE IF NOT EXISTS messages (
     session_id BIGINT UNSIGNED NOT NULL,
     role ENUM('user', 'assistant') NOT NULL,
     content TEXT NOT NULL,
-    intent VARCHAR(50) NULL COMMENT 'Message intent classification',
+    -- intent field deprecated - single intent RAG design, see AI架构设计.md
+    -- intent VARCHAR(50) NULL COMMENT 'Message intent classification',
     token_in INT UNSIGNED DEFAULT 0 COMMENT 'Input tokens for LLM',
     token_out INT UNSIGNED DEFAULT 0 COMMENT 'Output tokens from LLM',
     latency_ms INT UNSIGNED DEFAULT 0 COMMENT 'LLM response latency in milliseconds',
     finish_reason VARCHAR(50) NULL COMMENT 'stop/length/no_context/error',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    
+
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     INDEX idx_session_created (session_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
