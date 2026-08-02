@@ -10,7 +10,7 @@ from app.utils.auth import decode_access_token
 from app.models.user import User
 from app.core.exceptions import AuthenticationError
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -18,6 +18,12 @@ async def get_current_user(
     db: Session = Depends(get_db)
 ) -> User:
     """Dependency to get current authenticated user"""
+    # 缺失凭证时显式返回 401(FastAPI HTTPBearer 默认是 403,不符合 REST 规范)
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "AUTH_ERROR", "message": "Missing or invalid authentication token"},
+        )
     try:
         token = credentials.credentials
         payload = decode_access_token(token)

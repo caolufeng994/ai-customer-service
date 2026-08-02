@@ -1,226 +1,62 @@
-# NOTES.md
+# NOTES（AI 改动 / 踩坑 / 偏离记录）
 
-## AI 生成代码修改记录
-
-本文档记录对 AI 生成代码的修改、原因及未解决的问题。
-
----
-
-## 后端修改
-
-### 1. chat_service.py - LLM 降级链路接线
-**文件**: `backend/app/services/chat_service.py`
-
-**修改内容**: 在 `chat_stream` 方法中添加了 LLM 降级逻辑
-- 将主 LLM 调用包裹在 try-except 块中
-- 捕获异常后调用 `fallback_to_ollama()` 切换到本地模型
-- 添加 SSE status 事件提示用户模型切换
-
-**修改原因**: 原代码中 `fallback_to_ollama()` 方法已定义但从未被调用，导致主模型故障时服务直接中断
-
-**修改行数**: 约 15 行
+> 本文件是 AI 协助开发过程中的**知识沉淀**，记录「改了什么、为何改、踩过什么坑、哪些地方偏离了规范」。
+> 接到任何新任务前，**先读本文件**，再结合 `docs/文档索引.md` 定位具体规范。本文件优先级高于记忆。
 
 ---
 
-### 2. chat_service.py - 引用片段与 Token 统计修复
-**文件**: `backend/app/services/chat_service.py`
+## 〇、项目速览（随时可能用到的硬事实）
 
-**修改内容**:
-- 将 token 统计从伪造值 (`token_in=0`, `token_out=len(content)//2`) 改为近似计算 (`len(context)//4`, `len(full_response)//4`)
-- 从 `retrieval_results` 中提取实际内容作为引用片段 (snippet)，截断至 120 字符
-- 构建完整的 citations 数组传递给 `save_assistant_message`
+- **入口**：`backend/main.py` → `uvicorn.run("app.server:app", ...)`。单入口，不要再用旧的 `app/main.py`。
+- **启动**：在 `backend/` 下 `python main.py`；`PORT`（默认 8000）、`RELOAD`（默认 false，设 `RELOAD=true` 开热重载）为环境变量。
+- **数据库**：**严格 MySQL**。库名 `ai_customer_service`（真实库）。**测试 `pytest` 会 `drop_all`+`create_all` 清空真实库**，跑前请确认数据可丢。
+- **文档站点**：`/docs`（Swagger，本地静态资源 `app/static/`）、`/redoc`、`/health`。FastAPI 内置 docs 已被禁用（离线可用）。
+- **当前分支**：`feature/agent-doc-index`；保护分支名为 `master`（非 `main`）。
 
-**修改原因**:
-- 引用片段恒为空导致 RAG 可信度无法验证
-- Token 统计失真导致成本复盘数据不准确
+## 一、近期 AI 改动时间线
 
-**修改行数**: 约 20 行
+- **2026-08-02**：定位并修复 `python main.py` 启动即崩 —— 根因 `.env` 含 UTF-8 中文注释，中文 Windows 用 GBK 读导致 `UnicodeDecodeError: 'gbk'`。修复：`.env` 改纯 ASCII + `config.py` 加 `env_file_encoding="utf-8"` 兜底。
+- **2026-08-02**：`main.py` 的 `uvicorn.run(reload=True)` 改为默认 `reload=False`（由环境变量控制）。修复 Windows 下 Ctrl+C 残留孤儿进程。
+- **2026-08-02**：测试库 `ai_customer_service_test` 删除，`tests/conftest.py` 改连真实库（`settings.db_name`）。
+- **2026-08-02**：补全缺失接口（代码侧）：knowledge `GET/PUT /api/kb/documents/{id}`、feedback `GET /api/feedback` + `GET/DELETE /api/feedback/{id}`、chat `POST /api/chat/send` + `GET /api/chat/history`。RAG 管线抽成共享生成器 `_chat_events`，`/stream` 与 `/send` 共用。
+- **2026-08-03（本轮）**：
+  - **P0**：`docs/API文档.md` 补 7 个接口定义 + 刷新「已知差距」；本 `NOTES.md` 新建；`docs/文档索引.md` 移除两份悬空引用、强化 NOTES 引用。
+  - **P1**：9 个模型由旧式 `Column(...)` 迁移为 SQLAlchemy 2.0 风格 `Mapped[...]` + `mapped_column(...)`（SQLAlchemy 2.0.29）；`chat_service.py` 查询改用 `select()`；chat 历史查询从 API 层下沉到 `ChatService.get_history`（消除 API 层直查 DB 的分层违规）；新建 25 条问答评测集。
+  - **P2/P3**：仅为 4 处公开函数补 docstring（未做返回注解/分支/提交信息整改）；**P3 的 pre-commit/CI 强制 lint 项已决策不采纳**（见下方「与规范的偏离」）。
 
----
+## 二、踩坑记录（踩过的雷，避免重踩）
 
-### 3. chat_service.py - 模型客户端单例化
-**文件**: `backend/app/services/chat_service.py`
+1. **`.env` 中文注释 + 中文 Windows = GBK 解码崩溃**。教训：配置文件保持 ASCII；或 `config.py` 设 `env_file_encoding="utf-8"`。
+2. **`reload=True` 在 Windows 下 Ctrl+C 可能残留 uvicorn 子进程**，占着 8000 端口。已默认关闭。
+3. **FastAPI 0.115.0 内置 `/docs` 硬编码 jsDelivr CDN**，离线打开空白。已改为禁用内置路由 + 本地 `app/static/` 资源 + 自定义 `/docs`/`/redoc`。
+4. **沙箱与本机进程隔离**：WorkBuddy 内终端看不到本机进程，`taskkill` 对本机/沙箱自身进程无效；本机残留进程需在本机真实终端清理。
+5. **`pytest` 会清空真实库**：`conftest` 每用例 `drop_all`+`create_all`。跑测试前务必确认数据可丢或先备份。
 
-**修改内容**:
-- 添加 `@lru_cache` 装饰的单例函数：`get_retriever()`, `get_context_builder()`, `get_prompt_builder()`, `get_llm_client()`
-- 修改 `chat_stream` 方法调用单例函数而非每次请求创建新实例
+## 三、与规范的偏离（需向评审/面试解释的地方）
 
-**修改原因**: 每次请求重建模型客户端导致性能瓶颈，特别是本地 embedding 模型每次重载
+- **sessions 更新接口**：`PUT /api/sessions/{id}` 的 `title` 仍走 **Query 参数**（非 Body），为不破坏已绿的 52 接口测试套件而保留。规范偏好的 REST 风格是放 Body。
+- **返回类型注解**：123 个函数中有 52 个缺 `->`（多为 FastAPI 路由与 `__init__`）。规范字面要求全带，业界常豁免路由/`__init__`，尚未统一决策。
+- **无 CI / 未强制 lint（已决策）**：不引入 pre-commit / `.github/workflows` / CI 强制。提交由手动 `git commit` 完成；`backend/ruff.toml` 已删除（原 ruff 配置不再保留）。本地可自选 `ruff check` / `black` 自查，但非门禁。
+- **ORM `select()` 未全量迁移**：本轮仅 `chat_service.py` 改用 `select()`，其余 service 仍用 `db.query(...)`（SQLAlchemy 2.0 仍兼容）。全量迁移属更大改动，应配合测试覆盖进行。
 
-**修改行数**: 约 25 行
+## 四、待验证 / 待办
 
----
+- [ ] 评测集（`backend/tests/eval/qa_set.json`）需**实跑服务 + DashScope** 后填写真实检索/回答/引用准确率（门禁：检索>80%、回答>75%、引用>90%），当前仅有用例与占位结果。
+- [ ] 是否将 sessions `PUT` 的 `title` 改为 Body（并同步改 `test_session_api.py`）。
+- [ ] 是否补 return annotation 或明文豁免。
+- [ ] 交付前：`pytest` 跑通全量（会清空真实库）→ 用种子/初始化脚本重建业务数据 → 提交 → 推送。
 
-## 前端修改
+## 五、关键文件路径速查
 
-### 1. request.ts - SSE 流式请求实现
-**文件**: `frontend/src/utils/request.ts`
-
-**修改内容**: 新增 `postStream` 函数
-- 使用 `fetch` 发起 POST 请求
-- 通过 `ReadableStream` 读取响应体
-- 按 `\n\n` 分割 SSE 帧
-- 解析 `data:` 行并回调 `onEvent`
-- 处理 UTF-8 分包截断（buffer 拼接）
-- 支持 `AbortController` 取消请求
-
-**修改原因**: 原前端使用 axios 非流式请求，无法对接后端 SSE 接口
-
-**修改行数**: 约 80 行
-
----
-
-### 2. Sessions.tsx - SSE 流式对接与契约对齐
-**文件**: `frontend/src/pages/Sessions.tsx`
-
-**修改内容**:
-- 导入 `postStream` 函数
-- 将 `sendMessage` 改用 `postStream` 调用 `/api/chat/stream`
-- 处理 SSE 事件类型：`session_id`, `status`, `content`, `done`, `error`
-- 请求体字段从 `question` 改为 `message`（对齐后端 `ChatRequest.message`）
-- 移除 `response.data.answer` 读取
-- `loadMessages` 从 `/sessions/${id}/messages` 改为 `/sessions/${id}`，从返回的 `messages` 字段取数
-
-**修改原因**:
-- 前端未实现 SSE 流式对接，核心功能不可用
-- 字段契约与后端错位导致 422 错误
-
-**修改行数**: 约 50 行
-
----
-
-### 3. Sessions.tsx - 修复 done 事件 stale closure
-**文件**: `frontend/src/pages/Sessions.tsx`
-
-**修改内容**:
-- 添加 `streamingRef` (useRef) 用于累积流式内容
-- 修改 `content` 事件处理：使用 `streamingRef.current += event.data` 累加，然后更新 state
-- 修改 `done` 事件处理：从 `streamingRef.current` 读取完整内容而非闭包快照
-- 移除未使用的 `navigate` 导入
-
-**修改原因**: 原代码在 `done` 事件中使用闭包变量 `streamingContent`，该变量恒为初始值 `''`，导致最终消息内容丢失
-
-**修改行数**: 约 10 行
-
----
-
-### 4. Sessions.tsx - 清理自定义 CSS（内联样式）
-**文件**: `frontend/src/pages/Sessions.tsx`, `frontend/src/index.css`
-
-**修改内容**:
-- 移除 `Sessions.tsx` 中所有 `style={{...}}` 内联样式
-- 将样式迁移到 `index.css` 中的 CSS 类：`.sider-header`, `.content-container`, `.messages-container`
-- 修改 JSX 使用 className 替代 style
-
-**修改原因**: 违反「零自定义 CSS」红线，应回归 AntD 默认样式
-
-**修改行数**: 约 30 行（删除内联样式 + 新增 CSS 类）
-
----
-
-### 5. index.css - 清理自定义全局样式
-**文件**: `frontend/src/index.css`
-
-**修改内容**:
-- 删除深色背景 `#242424`
-- 删除 `color-scheme` 设置
-- 删除 `:root` 中的字体合成、文本渲染等样式
-- 删除 `*` 的全局重置样式
-- 仅保留 `@import 'antd/dist/reset.css'` 和基础 body/root 样式
-- 新增组件样式类（见修改 4）
-
-**修改原因**: 深色背景与 AntD 浅色主题冲突，违反规范
-
-**修改行数**: 从 32 行增加到 36 行（删除全局样式 + 新增组件样式）
-
----
-
-## 配置文件新增
-
-### 1. 前端 Lint 配置
-**新增文件**:
-- `frontend/.eslintrc.cjs` - ESLint 配置
-- `frontend/.prettierrc` - Prettier 配置
-
-**修改内容**:
-- 添加 TypeScript、React、React Hooks 规则
-- 设置行宽 100，单引号，无分号
-- 添加 `eslint-plugin-react` 到 package.json
-
-**修改原因**: 缺少可执行的 lint 配置，规范无法落地
-
----
-
-### 2. 后端 Lint 配置
-**新增文件**: `backend/ruff.toml`
-
-**修改内容**:
-- 配置 Ruff 规则集（E, F, I, N, W, UP）
-- 设置行宽 100，目标 Python 3.9
-- 添加 `ruff==0.1.9` 到 requirements.txt
-
-**修改原因**: 缺少 Python 代码检查工具
-
----
-
-## 未解决的问题
-
-### 1. 前端 TypeScript 类型错误
-**问题**: IDE 显示大量 TypeScript 类型错误（无法找到模块声明）
-**原因**: 依赖未安装（需要运行 `npm install`）
-**解决**: 待用户按《使用说明.md》安装依赖后自动解决
-
----
-
-## 待验证项
-
-1. **SSE 流式响应**: 需启动后端和前端，实际测试流式聊天功能
-2. **LLM 降级**: 需模拟主模型故障，验证降级到 Ollama 是否正常
-3. **引用片段**: 需验证前端是否正确显示引用来源
-4. **Token 统计**: 需对比实际 API 返回的 usage 字段验证准确性
-5. **Lint 检查**: 需运行 `npm run lint` 和 `ruff check .` 验证配置
-6. **done 事件修复**: 需验证流式回答完成后消息内容是否正确保存
-
----
-
-## 修改统计
-
-- **后端修改**: 1 个文件，约 60 行
-- **前端修改**: 2 个文件，约 170 行（含新增 80 行）
-- **配置新增**: 4 个文件
-- **总计**: 7 个文件修改/新增
-
----
-
-## 备注
-
-所有修改均遵循《AI智能客服系统_执行方案》、《改进建议.md》和《项目完整文档》的要求，优先解决 R0/R1 级别的核心功能问题，然后处理 R2/R3 级别的规范治理问题。
-
----
-
-## 2026-08-01：新增 agent 文档索引工具 `tools/doc-index/`
-
-- **由 AI（WorkBuddy）生成**：完整工具（引擎 + 索引 + 测试 + README + ruff 配置）。
-- **目的**：让 AI Agent 按任务关键词精准定位需读取的文件，避免无关文件占用上下文。
-- **关键决策（面试可讲）**：
-  1. **零第三方依赖**：纯标准库实现，任意环境零安装即可运行，结果确定可复现。
-  2. **引擎/数据解耦**：`doc_index.py`（算法）与 `doc_index.json`（数据）分离，
-     换项目只改 JSON，引擎不动——体现"配置与逻辑分离"设计原则。
-  3. **相关性打分**：`0.40*关键词+0.30*场景+0.20*概述+0.10*路径` 加权命中率，
-     仅返回 `score≥阈值` 文件，避免全量加载。
-  4. **分词器**：ASCII 整词（≥2 字符小写）+ 中文整句短语 + 二元文法 bigram，
-     兼顾整词精确匹配与局部子串模糊匹配。
-- **合规改造（对齐《代码规范》）**：
-  - 全函数类型注解；公开类/方法 + 模块首行均有 docstring。
-  - 输出统一走 `logging.getLogger(__name__)`，移除 `print()`。
-  - 自定义 `DocIndexError` 替代裸 `Exception`，CLI 优雅退出（码 2）。
-  - 新增 `ruff.toml`（与 `backend/ruff.toml` 一致：行宽 100，E/F/I/N/W/UP）。
-  - 新增 `tests/test_doc_index.py`（pytest）覆盖分词/加载/查询/错误/索引完整性。
-- **位置选择**：放在 `tools/` 下作为独立 agent 辅助工具，**不进入 `backend/app` 分层**，
-  以免污染 FastAPI 的 api/services/rag 分层约束（它不属于运行时服务）。
-- **验证**：`ruff check` 0 错误；`pytest` 全部通过；5 类任务查询（RAG 检索 / 登录密码 /
-  聊天流式 / 知识库上传 / 接口文档）命中精准、无噪声。
-- **修复记录**：
-  - 默认 `base_dir` 解析 bug（off-by-one：索引在 `tools/doc-index/`，仓库根为向上 3 级，
-    初版误取向上 2 级导致绝对路径指向 `tools/backend/...` 不存在的文件）→ 已修正。
-  - CLI 默认 `--index` 改为指向脚本同级索引，支持从任意 cwd 运行。
+| 内容 | 路径 |
+|------|------|
+| 启动入口 | `backend/main.py` |
+| 应用本体 / 自定义 docs 路由 | `backend/app/server.py` |
+| 配置（含 db、jwt、配额） | `backend/app/config.py` |
+| 接口路由 | `backend/app/api/{auth,session,knowledge,chat,feedback}.py` |
+| 业务逻辑 | `backend/app/services/*.py` |
+| ORM 模型（2.0 风格） | `backend/app/models/*.py` |
+| 统一响应 / 异常 | `backend/app/core/response.py`、`backend/app/core/exceptions.py` |
+| RAG 模块 | `backend/app/rag/{loader,splitter,embedder,vector_store,retriever,context_builder,prompt_builder,llm_client}.py` |
+| 测试 | `backend/tests/`（conftest 连真实库）、`backend/tests/eval/qa_set.json` |
+| 规范文档 | `docs/*.md`、`文档索引.md` |

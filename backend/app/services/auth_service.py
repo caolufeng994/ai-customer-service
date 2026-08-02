@@ -2,6 +2,7 @@
 Authentication service
 """
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.models.user import User
 from app.schemas.auth import RegisterRequest, LoginRequest
 from app.utils.auth import generate_salt, hash_password, verify_password, create_access_token, get_token_expires_in
@@ -18,10 +19,17 @@ class AuthService:
         if not request.phone and not request.email:
             raise ValidationError("Either phone or email must be provided")
         
-        # Check if user already exists
-        existing_user = db.query(User).filter(
-            (User.phone == request.phone) | (User.email == request.email)
-        ).first()
+        # Check if user already exists.
+        # Only match fields that are actually provided: `User.email == None` would
+        # degenerate into `email IS NULL` and falsely match every row whose email is
+        # empty, so a phone-only registration could be rejected as "Email already
+        # registered". Build the OR conditions dynamically from the provided fields.
+        conditions = []
+        if request.phone:
+            conditions.append(User.phone == request.phone)
+        if request.email:
+            conditions.append(User.email == request.email)
+        existing_user = db.query(User).filter(or_(*conditions)).first()
         
         if existing_user:
             if existing_user.phone == request.phone:

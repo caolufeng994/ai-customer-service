@@ -28,14 +28,14 @@ mysql -u root -p < init_db.sql
 
 ## Running
 
-Development mode:
+Development mode (推荐):
 ```bash
-python -m app.main
+python main.py
 ```
 
 Or using uvicorn directly:
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.server:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## Project Structure

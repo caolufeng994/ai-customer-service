@@ -17,17 +17,19 @@ def generate_salt() -> str:
 
 
 def hash_password(password: str, salt: str) -> str:
-    """Hash password with salt"""
-    # Combine password and salt before hashing
-    salted_password = f"{password}{salt}".encode("utf-8")
-    return bcrypt.hashpw(salted_password, bcrypt.gensalt()).decode("utf-8")
+    """Hash password.
+
+    注意:bcrypt 会在结果中嵌入自己的 salt,无需再拼接自定义 salt。
+    此前实现把 64 字符 hex salt 拼到密码后,导致输入超过 bcrypt 72 字节上限,
+    使所有注册/登录失败。这里仅对密码做哈希,自定义 salt 列仅作记录保留。
+    """
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, salt: str, hashed_password: str) -> bool:
-    """Verify password against hash"""
-    salted_password = f"{plain_password}{salt}".encode("utf-8")
+    """Verify password against hash (salt 参数保留以兼容调用点,不参与计算)"""
     try:
-        return bcrypt.checkpw(salted_password, hashed_password.encode("utf-8"))
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
     except (ValueError, TypeError):
         return False
 

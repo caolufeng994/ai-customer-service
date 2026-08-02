@@ -21,14 +21,22 @@ class Settings(BaseSettings):
     db_port: int = 3306
     db_name: str = "ai_customer_service"
     db_user: str = "root"
-    db_password: str = Field(..., min_length=1, description="Database password (required)")
+    db_password: str = Field(
+        "",
+        description="Database password. Empty = no-password root; OVERRIDE via .env in production",
+    )
 
     @property
     def database_url(self) -> str:
+        """拼装 SQLAlchemy 连接串（MySQL + PyMySQL 驱动），供 create_engine 使用。"""
         return f"mysql+pymysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
     # JWT
-    jwt_secret_key: str = Field(..., min_length=32, description="JWT secret key (required, min 32 chars)")
+    jwt_secret_key: str = Field(
+        "dev-insecure-jwt-secret-change-me-in-prod-32",
+        min_length=32,
+        description="JWT secret key. Dev default; OVERRIDE via .env in production (min 32 chars)",
+    )
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 24
     
@@ -60,6 +68,7 @@ class Settings(BaseSettings):
     
     @property
     def cors_origins_list(self) -> List[str]:
+        """将逗号分隔的 CORS 来源字符串解析为列表，供 CORSMiddleware 使用。"""
         return [origin.strip() for origin in self.cors_origins.split(",")]
     
     # Business Rules
@@ -80,6 +89,9 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        # Force UTF-8 when reading .env so Chinese comments don't crash on
+        # Windows (default GBK/cp936) with "UnicodeDecodeError: 'gbk'".
+        env_file_encoding = "utf-8"
         case_sensitive = False
 
 

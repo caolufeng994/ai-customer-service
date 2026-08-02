@@ -34,7 +34,17 @@ def get_db():
 
 def init_db():
     """
-    Initialize database tables
-    Call this on application startup
+    Initialize database tables. Call this on application startup.
+
+    Imports every model so all tables are registered on Base.metadata,
+    then creates any missing tables (idempotent). The target database is
+    MySQL and must already exist — this function only manages table schema,
+    not the database itself.
     """
+    # 注册全部模型,确保 create_all 能建出所有表
+    from app.models import (  # noqa: F401
+        User, Session, Message, MessageCitation,
+        KbDocument, KbChunk, Feedback, UsageQuota,
+    )
+
     Base.metadata.create_all(bind=engine)

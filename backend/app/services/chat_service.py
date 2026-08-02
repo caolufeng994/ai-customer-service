@@ -1,9 +1,12 @@
 """
 Chat service
 """
+from datetime import date
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import time
+import json
 from functools import lru_cache
 from app.models.session import Session as SessionModel
 from app.models.message import Message
@@ -16,7 +19,6 @@ from app.rag.prompt_builder import PromptBuilder
 from app.rag.llm_client import LLMClient
 from app.core.exceptions import ValidationError, QuotaExceededError
 from app.config import settings
-from datetime import date
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,12 +54,12 @@ class ChatService:
     @staticmethod
     def check_quota(db: Session, user_id: int) -> None:
         """Check if user has quota remaining"""
-        from datetime import date
-        
         # Get or create quota record for today
-        quota = db.query(UsageQuota).filter(
-            UsageQuota.user_id == user_id,
-            UsageQuota.date == date.today()
+        quota = db.scalars(
+            select(UsageQuota).where(
+                UsageQuota.user_id == user_id,
+                UsageQuota.date == date.today(),
+            )
         ).first()
         
         if not quota:
@@ -72,13 +74,10 @@ class ChatService:
     @staticmethod
     def increment_quota(db: Session, user_id: int) -> None:
         """Increment user's daily quota"""
-        from datetime import date
-        from sqlalchemy import and_
-        
-        quota = db.query(UsageQuota).filter(
-            and_(
+        quota = db.scalars(
+            select(UsageQuota).where(
                 UsageQuota.user_id == user_id,
-                UsageQuota.date == date.today()
+                UsageQuota.date == date.today(),
             )
         ).first()
         
@@ -91,9 +90,12 @@ class ChatService:
         """Get recent conversation history"""
         # Calculate limit based on max_history_rounds (each round = 2 messages: user + assistant)
         limit = settings.max_history_rounds * 2
-        messages = db.query(Message).filter(
-            Message.session_id == session_id
-        ).order_by(Message.created_at.desc()).limit(limit).all()
+        messages = db.scalars(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        ).all()
         
         # Convert to message format for LLM
         history = []
@@ -104,14 +106,36 @@ class ChatService:
             })
         
         return history
-    
+
+    @staticmethod
+    def get_history(
+        db: Session,
+        session_id: int,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> List[Message]:
+        """
+        Fetch chat messages for a session (ownership already enforced by the
+        caller via SessionService.get_session). Returns messages in
+        chronological order, supporting pagination.
+        """
+        return db.scalars(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.created_at.asc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
+
     @staticmethod
     def create_session_if_needed(db: Session, user_id: int, session_id: Optional[int]) -> SessionModel:
         """Create new session if session_id is None"""
         if session_id:
-            session = db.query(SessionModel).filter(
-                SessionModel.id == session_id,
-                SessionModel.user_id == user_id
+            session = db.scalars(
+                select(SessionModel).where(
+                    SessionModel.id == session_id,
+                    SessionModel.user_id == user_id,
+                )
             ).first()
             if not session:
                 raise ValidationError("Session not found")
@@ -177,35 +201,38 @@ class ChatService:
         return message
     
     @staticmethod
-    def chat_stream(
-        db: Session,
-        user_id: int,
-        request: ChatRequest
-    ):
+    def _chat_events(db: Session, user_id: int, request: ChatRequest):
         """
-        Stream chat response using RAG pipeline
-        Generator that yields SSE events
+        Core RAG pipeline generator shared by both streaming and non-streaming
+        endpoints. Yields structured SSE event dicts:
+            {"type": "session_id", "data": <int>}
+            {"type": "status",     "data": "generating"}
+            {"type": "content",    "data": <str chunk>}
+            {"type": "done",       "data": {"message_id", "finish_reason", "sources"}}
+            {"type": "error",      "data": <str>}
+        The assistant message is persisted and quota incremented exactly once,
+        regardless of which endpoint consumes the stream.
         """
         start_time = time.time()
-        
+
         # Step 1: Validate and check quota
         if len(request.message) > settings.max_question_length:
             raise ValidationError(f"Message too long (max {settings.max_question_length} characters)")
 
         ChatService.check_quota(db, user_id)
-        
+
         # Step 2: Get or create session
         session = ChatService.create_session_if_needed(db, user_id, request.session_id)
-        
+
         # Step 3: Save user message
         user_message = ChatService.save_user_message(db, session.id, request.message)
-        
-        # Yield session info
-        yield f"data: {ChatService._format_sse_event('session_id', session.id)}\n\n"
-        
+
+        # Emit session info
+        yield {"type": "session_id", "data": session.id}
+
         # Step 4: Get conversation history
         history = ChatService.get_conversation_history(db, session.id)
-        
+
         # Step 5: RAG pipeline
         try:
             # Retrieve (use singleton)
@@ -237,27 +264,27 @@ class ChatService:
             # Stream LLM response (use singleton)
             llm_client = get_llm_client()
             full_response = ""
-            
-            yield f"data: {ChatService._format_sse_event('status', 'generating')}\n\n"
-            
+
+            yield {"type": "status", "data": "generating"}
+
             try:
                 for chunk in llm_client.chat_stream(messages, temperature=0.7, max_tokens=1000):
                     full_response += chunk
-                    yield f"data: {ChatService._format_sse_event('content', chunk)}\n\n"
+                    yield {"type": "content", "data": chunk}
             except Exception as llm_error:
                 logger.error(f"LLM generation failed: {llm_error}")
-                # Graceful degradation: yield error message instead of raising
+                # Graceful degradation: return error message instead of raising
                 full_response = "抱歉，服务暂时不可用，请稍后重试。"
                 finish_reason = "error"
-                yield f"data: {ChatService._format_sse_event('content', full_response)}\n\n"
-            
+                yield {"type": "content", "data": full_response}
+
             latency_ms = int((time.time() - start_time) * 1000)
-            
+
             # Save assistant message
             # Calculate token estimates (approximate: 1 token ≈ 4 characters for Chinese)
             token_in = len(context) // 4 if context else 0
             token_out = len(full_response) // 4
-            
+
             # Build citations with snippets (truncate to 120 chars)
             citations = []
             for result in retrieval_results:
@@ -268,7 +295,7 @@ class ChatService:
                     "score": float(result.score),
                     "snippet": snippet
                 })
-            
+
             assistant_message = ChatService.save_assistant_message(
                 db=db,
                 session_id=session.id,
@@ -279,23 +306,76 @@ class ChatService:
                 finish_reason=finish_reason,
                 citations=citations
             )
-            
+
             # Increment quota
             ChatService.increment_quota(db, user_id)
-            
+
             # Update session message count
             session.msg_count += 1
             db.commit()
-            
-            # Yield completion event
-            yield f"data: {ChatService._format_sse_event('done', {'message_id': assistant_message.id, 'finish_reason': finish_reason, 'sources': sources})}\n\n"
-            
+
+            # Emit completion event
+            yield {
+                "type": "done",
+                "data": {
+                    "message_id": assistant_message.id,
+                    "finish_reason": finish_reason,
+                    "sources": sources,
+                },
+            }
+
         except Exception as e:
-            logger.error(f"Chat stream failed: {e}")
-            yield f"data: {ChatService._format_sse_event('error', str(e))}\n\n"
-    
+            logger.error(f"Chat pipeline failed: {e}")
+            yield {"type": "error", "data": str(e)}
+
     @staticmethod
-    def _format_sse_event(event_type: str, data) -> str:
-        """Format SSE event"""
-        import json
-        return json.dumps({"type": event_type, "data": data}, ensure_ascii=False)
+    async def chat_stream(db: Session, user_id: int, request: ChatRequest):
+        """
+        Stream chat response using RAG pipeline.
+        Returns an async generator that yields SSE-formatted strings
+        (``data: {json}\\n\\n``) consumed by FastAPI StreamingResponse.
+        """
+        for event in ChatService._chat_events(db, user_id, request):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    @staticmethod
+    def chat_send(db: Session, user_id: int, request: ChatRequest) -> dict:
+        """
+        Non-streaming chat: runs the same RAG pipeline as ``chat_stream`` but
+        collects the full answer and returns it as a single dict (no SSE).
+        Returns:
+            {
+              "session_id": int,
+              "message_id": int,
+              "content": str,
+              "finish_reason": str,
+              "sources": list[dict],
+            }
+        """
+        full_response = ""
+        session_id = None
+        done_data = None
+
+        for event in ChatService._chat_events(db, user_id, request):
+            etype = event.get("type")
+            if etype == "session_id":
+                session_id = event["data"]
+            elif etype == "content":
+                full_response += event["data"]
+            elif etype == "done":
+                done_data = event["data"]
+            elif etype == "error":
+                # error event carries the failure reason; surface it
+                done_data = done_data or {}
+                done_data.setdefault("finish_reason", "error")
+
+        if done_data is None:
+            done_data = {}
+
+        return {
+            "session_id": session_id,
+            "message_id": done_data.get("message_id"),
+            "content": full_response,
+            "finish_reason": done_data.get("finish_reason", "error"),
+            "sources": done_data.get("sources", []),
+        }

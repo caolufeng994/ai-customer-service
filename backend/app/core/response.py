@@ -2,7 +2,7 @@
 Unified Response Wrapper
 Standardizes API response format across all endpoints
 """
-from typing import Any, Optional, Generic, TypeVar
+from typing import Any, Optional, Generic, TypeVar, List
 from pydantic import BaseModel, Field
 
 T = TypeVar('T')
@@ -36,6 +36,7 @@ class PaginationMeta(BaseModel):
 
 class PaginatedResponse(ApiResponse[T]):
     """Paginated API response"""
+    data: Optional[List[T]] = Field(default=None, description="Response data list")
     meta: Optional[PaginationMeta] = Field(default=None, description="Pagination metadata")
     
     @classmethod

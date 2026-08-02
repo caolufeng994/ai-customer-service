@@ -1,7 +1,8 @@
 """
 Knowledge base API endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
+from typing import Optional
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.knowledge import DocumentResponse, DocumentUploadResponse
@@ -9,7 +10,7 @@ from app.services.knowledge_service import KnowledgeService
 from app.utils.dependencies import get_current_user
 from app.models.user import User
 from app.core.response import ApiResponse
-from app.core.exceptions import BaseAppException
+from app.core.exceptions import BaseAppException, ValidationError
 
 router = APIRouter()
 
@@ -102,5 +103,87 @@ async def delete_document(
     try:
         KnowledgeService.delete_document(db, document_id)
         return ApiResponse.ok(message="Document deleted successfully")
+    except BaseAppException as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+
+
+@router.get("/documents/{document_id}", response_model=ApiResponse[DocumentResponse])
+async def get_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a single knowledge-base document by ID"""
+    try:
+        document = KnowledgeService.get_document(db, document_id)
+        return ApiResponse.ok(data=DocumentResponse.model_validate(document))
+    except BaseAppException as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+
+
+@router.put("/documents/{document_id}", response_model=ApiResponse[DocumentResponse])
+async def update_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    name: Optional[str] = Form(None, max_length=255, description="New document name (optional)"),
+    file: UploadFile = File(None, description="New file to re-ingest (optional)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a knowledge-base document.
+
+    - Provide ``name`` to rename the document.
+    - Provide ``file`` to re-ingest a new file (the document is reset to
+      ``processing`` and re-vectorized in the background, exactly like upload).
+    - At least one of ``name`` / ``file`` must be supplied.
+    """
+    try:
+        # Require at least one update field
+        file_provided = file is not None and file.filename
+        if name is None and not file_provided:
+            raise ValidationError("Either 'name' or 'file' must be provided")
+
+        document = KnowledgeService.get_document(db, document_id)
+
+        # Rename
+        if name is not None:
+            document.name = name
+            db.commit()
+
+        # Re-ingest a new file
+        if file_provided:
+            allowed_types = ["txt", "md", "pdf"]
+            file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ""
+
+            if file_ext not in allowed_types:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "INVALID_FILE_TYPE", "message": f"Allowed file types: {', '.join(allowed_types)}"}
+                )
+
+            content = await file.read()
+            if len(content) > 10 * 1024 * 1024:  # 10MB
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "FILE_TOO_LARGE", "message": "File size exceeds 10MB limit"}
+                )
+
+            document.size = len(content)
+            document.file_type = file_ext
+            document.status = "processing"
+            db.commit()
+
+            background_tasks.add_task(
+                KnowledgeService.process_document,
+                db=db,
+                document_id=document.id,
+                file_content=content
+            )
+
+        return ApiResponse.ok(
+            data=DocumentResponse.model_validate(document),
+            message="Document updated successfully"
+        )
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})

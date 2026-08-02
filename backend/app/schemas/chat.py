@@ -16,3 +16,20 @@ class ChatMessage(BaseModel):
     """Chat message schema"""
     role: str
     content: str
+
+
+class ChatSource(BaseModel):
+    """Retrieval source cited by an assistant answer"""
+    doc_id: int
+    doc_name: Optional[str] = None
+    chunk_id: str
+    score: float
+
+
+class ChatSendResponse(BaseModel):
+    """Non-streaming chat send response schema"""
+    session_id: Optional[int] = None
+    message_id: Optional[int] = None
+    content: str
+    finish_reason: str  # stop | no_context | error
+    sources: List[ChatSource] = []
