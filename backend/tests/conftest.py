@@ -7,6 +7,9 @@ Pytest 全局配置与共享 fixtures —— 接口(API)自动化测试基础设
    (先关闭 FK 检查以保证可重放),保证用例间完全隔离、测试数据自动清理。
    ⚠️ 重要:测试运行会重建表结构,会清空真实库中既有数据;交付前再用种子/初始化
       脚本重建业务数据即可。这是有意为之(与"交付前再清理"的需求一致)。
+   ⚠️ 安全护栏:为防止误清空业务数据,`_reset_schema` 在业务库 `settings.db_name`
+      上执行 drop_all 前会检查 `PYTEST_ALLOW_WIPE=1`,未设置则直接报错拒绝。
+      即:测试默认不会破坏真实数据;确需清空时请显式开启该开关。
 2. 外部依赖隔离:mock 知识库后台文档处理(`process_document`)与聊天限流,
    避免触发真实 Embedding/Chroma/LLM 网络调用与测试间相互限流干扰。
 3. 响应封装:统一为 ApiResponse {success, code, message, data},断言时按此结构校验。
@@ -44,7 +47,18 @@ TEST_DB_URL = (
 
 
 def _reset_schema(engine):
-    """重建全部表；先关闭 FK 检查以保证 drop/create 可重复执行。"""
+    """重建全部表；先关闭 FK 检查以保证 drop/create 可重复执行。
+
+    安全护栏:对真实业务库 `settings.db_name` 执行 drop_all 会清空全部业务数据,
+    因此默认拒绝,必须显式设置环境变量 `PYTEST_ALLOW_WIPE=1` 才允许。测试若连的
+    不是业务库(例如未来的独立测试库),不受此限制。
+    """
+    db_name = engine.url.database
+    if db_name == settings.db_name and os.environ.get("PYTEST_ALLOW_WIPE") != "1":
+        raise RuntimeError(
+            f"拒绝在真实业务库 '{db_name}' 上执行 drop_all(会清空全部业务数据)。"
+            f"若确实要清空,请先设置环境变量 PYTEST_ALLOW_WIPE=1 再运行 pytest。"
+        )
     with engine.connect() as conn:
         conn.execute(text("SET FOREIGN_KEY_CHECKS=0"))
         Base.metadata.drop_all(bind=conn)
@@ -58,7 +72,8 @@ def engine():
     """Session 级 MySQL 引擎:直接连接真实业务库。
 
     每个测试函数内会重建表结构(drop_all + create_all),因此测试运行会清空真实库
-    中既有数据;交付前用种子/初始化脚本重建业务数据即可。
+    中既有数据;交付前用种子/初始化脚本重建业务数据即可。默认受安全护栏保护,
+    未设置 PYTEST_ALLOW_WIPE=1 时不会真的清空业务库。
     """
     eng = create_engine(TEST_DB_URL, pool_pre_ping=True)
     yield eng

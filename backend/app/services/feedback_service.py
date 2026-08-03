@@ -67,6 +67,22 @@ class FeedbackService:
         )
 
     @staticmethod
+    def count_feedbacks(
+        db: Session,
+        user_id: int,
+        rating: Optional[int] = None
+    ) -> int:
+        """Total count of the current user's feedback (honors the same rating filter).
+
+        Used to populate the paginated response's ``meta.total``/``total_pages`` so
+        they reflect the full result set rather than just the current page.
+        """
+        query = db.query(Feedback).filter(Feedback.user_id == user_id)
+        if rating is not None:
+            query = query.filter(Feedback.rating == rating)
+        return query.count()
+
+    @staticmethod
     def get_feedback(db: Session, feedback_id: int, user_id: int) -> Feedback:
         """Get a single feedback by ID, scoped to the current user."""
         feedback = db.query(Feedback).filter(

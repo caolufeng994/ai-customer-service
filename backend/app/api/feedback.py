@@ -43,7 +43,7 @@ async def list_feedback(
     """List feedback submitted by the current user (with pagination + rating filter)"""
     try:
         items = FeedbackService.get_feedbacks(db, current_user.id, skip, limit, rating)
-        total = len(items)  # In production, use a COUNT query
+        total = FeedbackService.count_feedbacks(db, current_user.id, rating)
         return PaginatedResponse.ok(
             data=[FeedbackResponse.model_validate(f) for f in items],
             total=total,

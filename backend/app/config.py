@@ -75,7 +75,11 @@ class Settings(BaseSettings):
     daily_quota_limit: int = 100
     max_question_length: int = 500
     retrieval_top_k: int = 8
-    retrieval_threshold: float = 0.35
+    # 相似度阈值。规范文档初版写 0.6，但实测 text-embedding-v3 的余弦相似度分布为：
+    # 相关查询 0.55~0.74、无关查询 0.40~0.42。0.6 会误杀产品咨询等相关块(0.55~0.56)，
+    # 0.35(原值)会让无关查询(0.40~0.42)漏入上下文。0.5 是该分布的干净分界点，
+    # 既拦截无关 query 又保留相关召回。已同步更新 API文档.md 业务规则第5条。
+    retrieval_threshold: float = 0.5
     max_history_rounds: int = 3
 
     # Rate Limiting
