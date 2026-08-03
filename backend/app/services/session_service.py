@@ -16,9 +16,11 @@ class SessionService:
     @staticmethod
     def create_session(db: Session, user_id: int, request: SessionCreate) -> SessionModel:
         """Create a new session"""
+        # Keep an explicitly-empty title as-is; only default when omitted (None).
+        title = request.title if request.title is not None else "新对话"
         session = SessionModel(
             user_id=user_id,
-            title=request.title or "新对话"
+            title=title
         )
         db.add(session)
         db.commit()

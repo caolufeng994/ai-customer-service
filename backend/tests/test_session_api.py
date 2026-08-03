@@ -3,7 +3,7 @@
 GET    /api/sessions
 POST   /api/sessions
 GET    /api/sessions/{id}
-PUT    /api/sessions/{id}        (query: title)
+PUT    /api/sessions/{id}        (body: {title})
 DELETE /api/sessions/{id}
 覆盖鉴权、CRUD、资源不存在、分页边界值。
 """
@@ -79,17 +79,65 @@ def test_update_session_title(client):
     creds = _login(client)
     h = auth_headers(creds["token"])
     created = client.post("/api/sessions", json={}, headers=h).json()["data"]
-    r = client.put(f"/api/sessions/{created['id']}", params={"title": "新标题"}, headers=h)
+    # title 现在通过 JSON body 传入(不再是 query 参数)
+    r = client.put(f"/api/sessions/{created['id']}", json={"title": "新标题"}, headers=h)
     assert r.status_code == 200
     assert r.json()["data"]["title"] == "新标题"
+
+
+def test_update_session_empty_title_allowed(client):
+    # 与创建接口一致,允许空串清空标题(SC03:保留显式空串)
+    creds = _login(client)
+    h = auth_headers(creds["token"])
+    created = client.post("/api/sessions", json={"title": "原标题"}, headers=h).json()["data"]
+    r = client.put(f"/api/sessions/{created['id']}", json={"title": ""}, headers=h)
+    assert r.status_code == 200
+    assert r.json()["data"]["title"] == ""
 
 
 def test_update_session_missing_title(client):
     creds = _login(client)
     h = auth_headers(creds["token"])
     created = client.post("/api/sessions", json={}, headers=h).json()["data"]
-    r = client.put(f"/api/sessions/{created['id']}", headers=h)  # 缺 title 必填
+    r = client.put(f"/api/sessions/{created['id']}", headers=h)  # 缺 body/title 必填
     assert r.status_code == 422
+
+
+def test_update_session_long_title(client):
+    # 与创建接口一致,title 受 max_length=255 约束
+    creds = _login(client)
+    h = auth_headers(creds["token"])
+    created = client.post("/api/sessions", json={}, headers=h).json()["data"]
+    r = client.put(f"/api/sessions/{created['id']}", json={"title": "x" * 256}, headers=h)
+    assert r.status_code == 422
+
+
+def test_detail_msg_count_uses_message_length(client):
+    """详情接口 msg_count 必须直接由 len(messages) 派生,
+    而非读取可能失同步的冗余计数器(session.msg_count)。"""
+    from app.database import SessionLocal
+    from app.models.message import Message
+
+    creds = _login(client)
+    h = auth_headers(creds["token"])
+    created = client.post("/api/sessions", json={}, headers=h).json()["data"]
+    sid = created["id"]
+
+    # 直接插入一条消息,但不调用 increment_message_count -> DB 中 msg_count 仍为 0
+    with SessionLocal() as db:
+        db.add(Message(
+            session_id=sid, role="user", content="hi",
+            token_in=0, token_out=0, latency_ms=0,
+        ))
+        db.commit()
+
+    # 此时 DB session.msg_count=0,但 messages 实际有 1 条
+    r = client.get(f"/api/sessions/{sid}", headers=h)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert len(body["messages"]) == 1
+    # 关键断言:详情应返回 len(messages)=1,而非失同步的 DB msg_count=0
+    assert body["session"]["msg_count"] == 1
 
 
 def test_delete_session(client):

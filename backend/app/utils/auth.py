@@ -16,20 +16,30 @@ def generate_salt() -> str:
     return secrets.token_hex(32)
 
 
+# bcrypt only considers the first 72 bytes of a password. Longer inputs raise
+# `ValueError: password too long` (which previously surfaced as HTTP 500 on
+# registration). Truncate to 72 bytes so that any password length is accepted,
+# matching bcrypt's documented semantics and the register schema (max_length=100).
+_BCRYPT_MAX_BYTES = 72
+
+
 def hash_password(password: str, salt: str) -> str:
     """Hash password.
 
     注意:bcrypt 会在结果中嵌入自己的 salt,无需再拼接自定义 salt。
     此前实现把 64 字符 hex salt 拼到密码后,导致输入超过 bcrypt 72 字节上限,
-    使所有注册/登录失败。这里仅对密码做哈希,自定义 salt 列仅作记录保留。
+    使所有注册/登录失败。这里仅对密码做哈希,并截断到 bcrypt 的 72 字节上限,
+    自定义 salt 列仅作记录保留。
     """
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    pw = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+    return bcrypt.hashpw(pw, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, salt: str, hashed_password: str) -> bool:
     """Verify password against hash (salt 参数保留以兼容调用点,不参与计算)"""
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        pw = plain_password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+        return bcrypt.checkpw(pw, hashed_password.encode("utf-8"))
     except (ValueError, TypeError):
         return False
 

@@ -11,6 +11,11 @@ class SessionCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
 
 
+class SessionUpdate(BaseModel):
+    """Session update request schema (rename)"""
+    title: str = Field(..., max_length=255)
+
+
 class SessionResponse(BaseModel):
     """Session response schema"""
     id: int

@@ -13,16 +13,43 @@ from app.services.session_service import SessionService
 from app.utils.dependencies import get_current_user
 from app.models.user import User
 from app.core.response import ApiResponse
-from app.core.exceptions import BaseAppException
+from app.core.exceptions import BaseAppException, NotFoundError
+from app.core.ratelimit import limiter
 from app.config import settings
 
 router = APIRouter()
 
+# Rate limit applied via slowapi's decorator (the only correct public API).
+# slowapi has no `limiter.check` method, so the previous `await limiter.check(...)`
+# calls raised AttributeError -> HTTP 500 on every request.
+# Both the per-IP limit and the global limit are applied here as a single
+# semicolon-separated string (stacking two @limiter.limit decorators would
+# drop the `request` parameter signature and fail at import time).
+_CHAT_RATE_LIMIT = f"{settings.ip_rate_limit};{settings.global_rate_limit}"
+
+
+async def _safe_stream(db: Session, user_id: int, payload: ChatRequest):
+    """Wrap the RAG streaming generator so the DB session is always closed.
+
+    For a ``StreamingResponse`` FastAPI's dependency teardown (``db.close()`` in
+    the ``get_db`` generator) is not reliably invoked once the stream starts,
+    which would leak the DB connection (and its open transaction -> metadata
+    lock) until garbage collection. Closing the session explicitly here keeps
+    the pool healthy in both production and tests. A later redundant
+    ``db.close()`` from FastAPI's teardown is a harmless no-op.
+    """
+    try:
+        async for chunk in ChatService.chat_stream(db, user_id, payload):
+            yield chunk
+    finally:
+        db.close()
+
 
 @router.post("/stream")
+@limiter.limit(_CHAT_RATE_LIMIT)
 async def chat_stream(
-    request: ChatRequest,
-    http_request: Request,
+    payload: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -30,15 +57,8 @@ async def chat_stream(
     Stream chat response using RAG pipeline
     Returns SSE (Server-Sent Events) stream
     """
-    # Apply rate limiting (both IP-level and global)
-    limiter = http_request.app.state.limiter
-    # IP-level limit
-    await limiter.check(settings.ip_rate_limit, key_func=lambda: http_request.client.host)
-    # Global limit
-    await limiter.check(settings.global_rate_limit)
-
     # Pre-validation before entering generator
-    if len(request.message) > settings.max_question_length:
+    if len(payload.message) > settings.max_question_length:
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_REQUEST", "message": f"Message too long (max {settings.max_question_length} characters)"}
@@ -50,9 +70,20 @@ async def chat_stream(
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
 
+    # Pre-validate referenced session so a missing session returns a clean 400
+    # (ValidationError) instead of failing mid-stream.
+    if payload.session_id is not None:
+        try:
+            SessionService.get_session(db, payload.session_id, current_user.id)
+        except NotFoundError:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "VALIDATION_ERROR", "message": "Session not found"}
+            )
+
     try:
         return StreamingResponse(
-            ChatService.chat_stream(db, current_user.id, request),
+            _safe_stream(db, current_user.id, payload),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -65,9 +96,10 @@ async def chat_stream(
 
 
 @router.post("/send", response_model=ApiResponse[ChatSendResponse])
+@limiter.limit(_CHAT_RATE_LIMIT)
 async def chat_send(
-    request: ChatRequest,
-    http_request: Request,
+    payload: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -75,13 +107,8 @@ async def chat_send(
     Non-streaming chat send. Runs the same RAG pipeline as /stream but returns
     the complete assistant reply as a single JSON object instead of SSE.
     """
-    # Rate limiting (same policy as /stream)
-    limiter = http_request.app.state.limiter
-    await limiter.check(settings.ip_rate_limit, key_func=lambda: http_request.client.host)
-    await limiter.check(settings.global_rate_limit)
-
     # Pre-validation
-    if len(request.message) > settings.max_question_length:
+    if len(payload.message) > settings.max_question_length:
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_REQUEST", "message": f"Message too long (max {settings.max_question_length} characters)"}
@@ -93,8 +120,18 @@ async def chat_send(
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
 
+    # Pre-validate referenced session (clean 400 instead of generator error)
+    if payload.session_id is not None:
+        try:
+            SessionService.get_session(db, payload.session_id, current_user.id)
+        except NotFoundError:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "VALIDATION_ERROR", "message": "Session not found"}
+            )
+
     try:
-        result = ChatService.chat_send(db, current_user.id, request)
+        result = ChatService.chat_send(db, current_user.id, payload)
         return ApiResponse.ok(
             data=ChatSendResponse(**result),
             message="Message sent successfully"

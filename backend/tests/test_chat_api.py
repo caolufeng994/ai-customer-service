@@ -63,10 +63,12 @@ def test_stream_message_too_long(client, monkeypatch):
     creds = _login(client)
     h = auth_headers(creds["token"])
     _mock_stream(monkeypatch, ["data: {}\n\n"])
-    # 等价类:超过 ChatRequest.message 的 max_length(500),由 pydantic 拦截为 422
+    # ChatRequest.message 不设 max_length(见 schema 注释),超长由端点返回
+    # 400 INVALID_REQUEST,而非 pydantic 的 422(这样错误消息更明确)。
     long_msg = "x" * 501
     r = client.post("/api/chat/stream", json={"message": long_msg}, headers=h)
-    assert r.status_code == 422
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "INVALID_REQUEST"
 
 
 def test_stream_message_boundary_500(client, monkeypatch):

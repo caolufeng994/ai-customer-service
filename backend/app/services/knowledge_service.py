@@ -2,7 +2,7 @@
 Knowledge base service
 """
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import os
 import uuid
 from pathlib import Path
@@ -43,6 +43,7 @@ class KnowledgeService:
         
         document = KbDocument(
             kb_id=kb_id,
+            user_id=user_id,
             name=file_name,
             file_path=file_path,
             file_type=file_type,
@@ -141,28 +142,40 @@ class KnowledgeService:
     
     @staticmethod
     def get_documents(db: Session, user_id: int, kb_id: str = "default") -> List[KbDocument]:
-        """Get all documents for a user"""
-        # For now, return all documents (user isolation can be added later)
+        """Get documents owned by the given user (per-user KB isolation)."""
         documents = db.query(KbDocument).filter(
-            KbDocument.kb_id == kb_id
+            KbDocument.kb_id == kb_id,
+            KbDocument.user_id == user_id
         ).order_by(KbDocument.created_at.desc()).all()
         return documents
     
     @staticmethod
-    def get_document(db: Session, document_id: int) -> KbDocument:
-        """Get a specific document"""
-        document = db.query(KbDocument).filter(KbDocument.id == document_id).first()
+    def get_document(db: Session, document_id: int, user_id: Optional[int] = None) -> KbDocument:
+        """Get a specific document.
+
+        When ``user_id`` is provided the lookup is scoped to that owner, so a
+        user can only fetch their own documents (per-user KB isolation). When
+        omitted (e.g. internal callers such as the background processor) the
+        lookup is unscoped.
+        """
+        query = db.query(KbDocument).filter(KbDocument.id == document_id)
+        if user_id is not None:
+            query = query.filter(KbDocument.user_id == user_id)
+        document = query.first()
         if not document:
             raise NotFoundError("Document not found")
         return document
-    
+
     @staticmethod
-    def delete_document(db: Session, document_id: int) -> None:
+    def delete_document(db: Session, document_id: int, user_id: Optional[int] = None) -> None:
         """
         Delete document and cascade delete vectors
-        This ensures consistency between MySQL and Chroma
+        This ensures consistency between MySQL and Chroma.
+
+        When ``user_id`` is provided the document must be owned by that user;
+        otherwise a NotFoundError is raised (per-user KB isolation).
         """
-        document = KnowledgeService.get_document(db, document_id)
+        document = KnowledgeService.get_document(db, document_id, user_id)
         
         try:
             # Step 1: Update status to deleting

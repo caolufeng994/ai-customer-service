@@ -2,7 +2,7 @@
 Knowledge base document model
 """
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from sqlalchemy import BigInteger, String, Integer, Enum, Text, DateTime, func, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -13,6 +13,8 @@ class KbDocument(Base):
     __tablename__ = "kb_documents"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True,
+                                                  comment="Owning user; enables per-user KB isolation")
     kb_id: Mapped[str] = mapped_column(String(50), nullable=False, default="default")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)

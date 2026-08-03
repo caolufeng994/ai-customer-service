@@ -101,7 +101,7 @@ async def delete_document(
 ):
     """Delete a document from the knowledge base"""
     try:
-        KnowledgeService.delete_document(db, document_id)
+        KnowledgeService.delete_document(db, document_id, current_user.id)
         return ApiResponse.ok(message="Document deleted successfully")
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
@@ -115,7 +115,7 @@ async def get_document(
 ):
     """Get a single knowledge-base document by ID"""
     try:
-        document = KnowledgeService.get_document(db, document_id)
+        document = KnowledgeService.get_document(db, document_id, current_user.id)
         return ApiResponse.ok(data=DocumentResponse.model_validate(document))
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
@@ -144,7 +144,7 @@ async def update_document(
         if name is None and not file_provided:
             raise ValidationError("Either 'name' or 'file' must be provided")
 
-        document = KnowledgeService.get_document(db, document_id)
+        document = KnowledgeService.get_document(db, document_id, current_user.id)
 
         # Rename
         if name is not None:

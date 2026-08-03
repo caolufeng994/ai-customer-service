@@ -92,11 +92,15 @@ def client(engine):
 
     app.dependency_overrides[get_db] = override_get_db
 
-    # 禁用 slowapi 限流,避免测试间累计触发 429 干扰断言
-    async def _noop_limit(*args, **kwargs):
-        return None
+    # 禁用 slowapi 限流,避免测试间累计触发 429 干扰断言。
+    # 注意:此前通过 `limiter.check = _noop_limit` 禁用;但崩溃修复后代码改用
+    # `@limiter.limit(...)` 装饰器(不再调用 limiter.check),该 patch 已失效。
+    # slowapi 在请求时通过 `self.limiter.hit(...)` 判定是否超限(self.limiter 即
+    # limiter._limiter),因此这里直接让 hit 永远返回 True(放行),使装饰器形同虚设。
+    def _always_allow(*args, **kwargs):
+        return True
 
-    limiter.check = _noop_limit
+    limiter._limiter.hit = _always_allow
 
     # Mock 知识库后台处理(原逻辑会触发 Embedding/Chroma/LLM 网络调用)
     async def _fake_process_document(db, document_id, file_content):

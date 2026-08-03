@@ -6,25 +6,22 @@ FastAPI 应用定义（Application 本体）
 """
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from contextlib import asynccontextmanager
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.logging import setup_logging
 from app.core.exceptions import BaseAppException
 from app.core.exception_handlers import base_app_exception_handler, generic_exception_handler
+from app.core.ratelimit import limiter  # shared slowapi instance
 import logging
 
 logger = logging.getLogger(__name__)
-
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -81,7 +78,22 @@ app = FastAPI(
 
 # Add rate limiter to app state
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Custom 429 handler.
+
+    slowapi's default handler returns ``{"error": "..."}`` which is inconsistent
+    with the rest of the API (every other 4xx/5xx uses ``{detail:{code,message}}``).
+    Override it so rate-limit rejections share the uniform error envelope.
+    """
+    return JSONResponse(
+        status_code=429,
+        content={"detail": {"code": "RATE_LIMIT_EXCEEDED", "message": "Rate limit exceeded. Please slow down and retry later."}},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
 
 # Configure CORS
 app.add_middleware(

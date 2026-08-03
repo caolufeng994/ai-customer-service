@@ -59,8 +59,11 @@ class TestRetriever:
         assert results[2].score == 0.7  # 1 - 0.3
 
     def test_retrieve_threshold_filtering(self, retriever, mock_vector_store):
-        """Test that results below similarity threshold are filtered"""
-        # Mock vector store response with low similarity
+        """Test that results below similarity threshold are filtered.
+
+        similarity = 1 - distance; threshold = 0.6 -> keep distance <= 0.4.
+        distances [0.1, 0.3, 0.8] -> similarities [0.9, 0.7, 0.2] -> 2 kept.
+        """
         mock_vector_store.query.return_value = {
             'ids': [['chunk1', 'chunk2', 'chunk3']],
             'documents': [['Content 1', 'Content 2', 'Content 3']],
@@ -69,14 +72,14 @@ class TestRetriever:
                 {'doc_id': 1, 'doc_name': 'doc1.pdf', 'chunk_index': 1},
                 {'doc_id': 2, 'doc_name': 'doc2.pdf', 'chunk_index': 0}
             ]],
-            'distances': [[0.1, 0.5, 0.8]]  # Last one below threshold (similarity < 0.6)
+            'distances': [[0.1, 0.3, 0.8]]
         }
 
         results = retriever.retrieve("test query", kb_id="default")
 
         assert len(results) == 2  # Only first two pass threshold
         assert results[0].score == 0.9
-        assert results[1].score == 0.5
+        assert results[1].score == 0.7
 
     def test_retrieve_empty_results(self, retriever, mock_vector_store):
         """Test handling of empty vector store results"""
@@ -123,8 +126,11 @@ class TestRetriever:
         assert mock_vector_store.query.call_count == 2
 
     def test_retrieve_top_k_limit(self, retriever, mock_vector_store):
-        """Test that only top_k results are returned"""
-        # Mock more results than top_k
+        """Test that only top_k results are returned.
+
+        All 10 mock chunks are high similarity (distance <= 0.4 -> similarity >= 0.6),
+        so none are dropped by the threshold filter; top_k=8 then caps the list.
+        """
         mock_vector_store.query.return_value = {
             'ids': [['chunk1', 'chunk2', 'chunk3', 'chunk4', 'chunk5', 'chunk6', 'chunk7', 'chunk8', 'chunk9', 'chunk10']],
             'documents': [['Content ' + str(i) for i in range(1, 11)]],
@@ -132,7 +138,7 @@ class TestRetriever:
                 {'doc_id': 1, 'doc_name': 'doc1.pdf', 'chunk_index': i}
                 for i in range(10)
             ]],
-            'distances': [[0.1 * i for i in range(1, 11)]]  # All high similarity
+            'distances': [[0.04 * i for i in range(1, 11)]]  # 0.04..0.40 -> all >= 0.6 sim
         }
 
         results = retriever.retrieve("test query", kb_id="default")

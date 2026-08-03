@@ -29,7 +29,7 @@ def sample_retrieval_results():
             chunk_id="chunk2",
             content="This is the second chunk about pricing information.",
             score=0.85,
-            doc_id=1,
+            doc_id=2,
             doc_name="product_manual.pdf",
             chunk_index=1
         ),
@@ -37,7 +37,7 @@ def sample_retrieval_results():
             chunk_id="chunk3",
             content="This is the third chunk about warranty details.",
             score=0.8,
-            doc_id=2,
+            doc_id=3,
             doc_name="warranty.pdf",
             chunk_index=0
         )
