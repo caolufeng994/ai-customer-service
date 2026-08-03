@@ -408,7 +408,7 @@ Content-Type: multipart/form-data
 ```
 
 **常见错误**：
-- `400` + `detail.code = INVALID_FILE_TYPE`：文件类型不支持（仅 txt/md/pdf）。
+- `400` + `detail.code = INVALID_FILE_TYPE`：文件类型不支持（仅 txt/md/pdf/docx）。
 - `400` + `detail.code = FILE_TOO_LARGE`：文件超过 10 MB。
 - `401` + `detail.code = AUTH_ERROR`：未认证。
 
@@ -515,7 +515,7 @@ Content-Type: multipart/form-data
 
 **请求参数**：
 - `name` (可选): 新文档名，最长 255 字符
-- `file` (可选): 新文件（`multipart/form-data`），类型限 `txt/md/pdf`，大小 ≤ 10 MB
+- `file` (可选): 新文件（`multipart/form-data`），类型限 `txt/md/pdf/docx`，大小 ≤ 10 MB
 
 **响应（200）**：
 
@@ -872,7 +872,7 @@ Content-Type: application/json
 | `AUTHORIZATION_ERROR` | 403 | 权限不足 |
 | `NOT_FOUND` | 404 | 资源不存在（会话/文档/消息等） |
 | `QUOTA_EXCEEDED` | 429 | 超出每日提问配额 |
-| `INVALID_FILE_TYPE` | 400 | 上传文件类型不支持（仅 txt/md/pdf） |
+| `INVALID_FILE_TYPE` | 400 | 上传文件类型不支持（仅 txt/md/pdf/docx） |
 | `FILE_TOO_LARGE` | 400 | 上传文件超过 10 MB |
 | `DOC_PROCESSING_ERROR` | 500 | 文档处理失败 |
 | `LLM_ERROR` | 503 | LLM 调用失败 |

@@ -18,7 +18,9 @@ class KbDocument(Base):
     kb_id: Mapped[str] = mapped_column(String(50), nullable=False, default="default")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_type: Mapped[str] = mapped_column(Enum('txt', 'md', 'pdf', name='file_type'), nullable=False)
+    file_type: Mapped[str] = mapped_column(
+        Enum('txt', 'md', 'pdf', 'docx', name='file_type'), nullable=False
+    )
     size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     char_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

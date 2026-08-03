@@ -215,11 +215,11 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    setup_logging()
+    log_config = setup_logging()
     uvicorn.run(
         "app.server:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level=settings.log_level.lower()
+        log_config=log_config,
     )

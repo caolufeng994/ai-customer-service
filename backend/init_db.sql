@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     kb_id VARCHAR(50) NOT NULL DEFAULT 'default' COMMENT 'Knowledge base ID for multi-kb support',
     name VARCHAR(255) NOT NULL,
     file_path VARCHAR(500) NOT NULL,
-    file_type ENUM('txt', 'md', 'pdf') NOT NULL,
+    file_type ENUM('txt', 'md', 'pdf', 'docx') NOT NULL,
     size BIGINT UNSIGNED NOT NULL COMMENT 'File size in bytes',
     char_count INT UNSIGNED DEFAULT 0,
     chunk_count INT UNSIGNED DEFAULT 0,

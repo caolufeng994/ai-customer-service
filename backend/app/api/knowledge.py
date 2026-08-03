@@ -11,8 +11,23 @@ from app.utils.dependencies import get_current_user
 from app.models.user import User
 from app.core.response import ApiResponse
 from app.core.exceptions import BaseAppException, ValidationError
+from app.rag.loader import ALLOWED_UPLOAD_EXTS
 
 router = APIRouter()
+
+
+def _validate_file_ext(filename: str) -> str:
+    """校验上传文件后缀并返回归一化扩展名(上传与重新入库两处共用)。"""
+    file_ext = filename.split('.')[-1].lower() if '.' in filename else ""
+    if file_ext not in ALLOWED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_FILE_TYPE",
+                "message": f"Allowed file types: {', '.join(ALLOWED_UPLOAD_EXTS)}",
+            },
+        )
+    return file_ext
 
 
 @router.post("/documents", response_model=ApiResponse[DocumentUploadResponse])
@@ -27,15 +42,8 @@ async def upload_document(
     Processing is done asynchronously in the background
     """
     # Validate file type
-    allowed_types = ["txt", "md", "pdf"]
-    file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ""
-    
-    if file_ext not in allowed_types:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "INVALID_FILE_TYPE", "message": f"Allowed file types: {', '.join(allowed_types)}"}
-        )
-    
+    file_ext = _validate_file_ext(file.filename)
+
     # Validate file size (10MB limit)
     file_size = 0
     content = await file.read()
@@ -153,14 +161,7 @@ async def update_document(
 
         # Re-ingest a new file
         if file_provided:
-            allowed_types = ["txt", "md", "pdf"]
-            file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ""
-
-            if file_ext not in allowed_types:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"code": "INVALID_FILE_TYPE", "message": f"Allowed file types: {', '.join(allowed_types)}"}
-                )
+            file_ext = _validate_file_ext(file.filename)
 
             content = await file.read()
             if len(content) > 10 * 1024 * 1024:  # 10MB

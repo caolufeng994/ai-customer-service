@@ -151,7 +151,7 @@ export default function KnowledgeBase() {
             fileList={fileList}
             onChange={({ fileList }) => setFileList(fileList)}
             beforeUpload={() => false}
-            accept=".txt,.md,.pdf"
+            accept=".txt,.md,.pdf,.docx"
           >
             <Button icon={<UploadOutlined />} size="large">
               Select File

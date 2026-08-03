@@ -52,7 +52,7 @@ def main():
     # 双保险:无论 import 顺序如何,确保知识库自动初始化开启。
     settings.auto_init_kb = True
 
-    setup_logging()
+    log_config = setup_logging()
     docs_url = f"http://localhost:{PORT}/docs"
     print("\n" + "=" * 64)
     print("  AI Customer Service 正在启动 ...")
@@ -69,6 +69,7 @@ def main():
         host=HOST,
         port=PORT,
         reload=RELOAD,
+        log_config=log_config,
     )
 
 

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, init_db
 from app.models.kb_document import KbDocument
 from app.services.knowledge_service import KnowledgeService
+from app.rag.loader import ALLOWED_UPLOAD_EXTS, SUPPORTED_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,8 @@ logger = logging.getLogger(__name__)
 SEED_KB_ID = "default"
 
 # Supported source extension -> DB file_type enum value.
-SUPPORTED_EXTS = {"txt": "txt", "md": "md", "markdown": "md", "pdf": "pdf"}
+# 复用 loader 的单一事实来源,避免与上传校验、解析分发出现漂移。
+SUPPORTED_EXTS = SUPPORTED_EXTENSIONS
 
 # create_document_record does not persist a user_id column; this is a placeholder
 # to satisfy the signature for system-initiated (non-user) ingestion.
@@ -82,7 +84,8 @@ def seed_knowledge_base(force: bool = False, kb_id: str = SEED_KB_ID) -> Dict[st
         if p.is_file() and p.suffix.lower().lstrip(".") in SUPPORTED_EXTS
     )
     if not files:
-        result["error"] = "no supported seed documents (.txt/.md/.pdf) found"
+        supported = "/".join(f".{e}" for e in ALLOWED_UPLOAD_EXTS)
+        result["error"] = f"no supported seed documents ({supported}) found"
         logger.warning(result["error"])
         return result
 
