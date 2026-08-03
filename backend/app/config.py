@@ -43,13 +43,13 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: str = "dashscope"  # currently only dashscope (cloud) is supported
     dashscope_api_key: str = ""
-    # DashScope 对话模型（较新推荐：qwen3.7-max / qwen3.7-plus / qwen3.7-flash）
-    dashscope_model: str = "qwen3.7-plus"
+    # DashScope 对话模型(真实可用,免费额度覆盖): qwen-plus / qwen-max / qwen-turbo 等
+    dashscope_model: str = "qwen-plus"
 
     # Embedding
     embedding_provider: str = "dashscope"
-    # 最新嵌入模型（2026 发布，1024 维，与 Chroma 维度兼容）
-    embedding_model: str = "qwen3.7-text-embedding"
+    # 真实可用的 DashScope 文本向量模型(默认输出 1024 维,与 Chroma 维度兼容)
+    embedding_model: str = "text-embedding-v3"
     local_embedding_model: str = "bge-small-zh-v1.5"
     
     # Vector Database

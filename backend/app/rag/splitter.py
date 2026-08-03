@@ -91,7 +91,7 @@ class TextSplitter:
             return
         
         # Try each separator in priority order
-        for separator in self.separATORS:
+        for separator in self.separators:
             if separator == '':
                 # Last resort: split by character
                 self._split_by_character(text, chunks)
