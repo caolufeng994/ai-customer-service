@@ -5,8 +5,8 @@ import { useNavigate } from 'react-router-dom'
 import request from '../utils/request'
 
 interface LoginForm {
-  phone?: string
-  email?: string
+  /** 手机号或邮箱，字段名需与后端 LoginRequest 保持一致（见 docs/API文档.md 登录接口） */
+  phone_or_email: string
   password: string
 }
 
@@ -17,7 +17,14 @@ export default function Login() {
   const onFinish = async (values: LoginForm) => {
     setLoading(true)
     try {
-      const response = await request.post('/auth/login', values)
+      // 显式构造请求体，不直接透传表单 values：
+      // 避免表单字段名与接口契约字段名的隐式耦合（历史上这里因表单叫 phone 而接口要
+      // phone_or_email，导致登录恒返回 422）。手机号/邮箱顺带 trim，防止首尾空格误判为账号不存在。
+      const payload = {
+        phone_or_email: values.phone_or_email?.trim(),
+        password: values.password,
+      }
+      const response = await request.post('/auth/login', payload)
       localStorage.setItem('token', response.data.token)
       message.success('Login successful')
       navigate('/sessions')
@@ -45,7 +52,7 @@ export default function Login() {
         >
           <Form.Item
             label="Phone or Email"
-            name="phone"
+            name="phone_or_email"
             rules={[{ required: true, message: 'Please input your phone or email!' }]}
           >
             <Input

@@ -23,6 +23,31 @@ request.interceptors.request.use(
   }
 )
 
+/**
+ * 从后端错误响应体中提取可读提示。
+ *
+ * 后端统一错误信封为 `{"detail": {"code": "...", "message": "..."}}`（见 docs/API文档.md），
+ * 参数校验失败（422）则是 FastAPI 默认的 `{"detail": [{loc, msg, type}, ...]}`。
+ * 直接读 `data.message` 两种都取不到，会把真实原因（如“账号不存在 / 密码错误”）
+ * 吞掉并统一显示为 "Request failed"。
+ */
+function extractErrorMessage(data: any, fallback = 'Request failed'): string {
+  if (!data) return fallback
+  const detail = data.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    // 422：拼出「字段: 原因」，只取第一条，避免提示过长
+    const first = detail[0]
+    if (first) {
+      const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : ''
+      return field ? `${field}: ${first.msg}` : first.msg || fallback
+    }
+    return fallback
+  }
+  if (detail && typeof detail === 'object' && detail.message) return detail.message
+  return data.message || fallback
+}
+
 // Response interceptor
 request.interceptors.response.use(
   (response) => {
@@ -36,14 +61,21 @@ request.interceptors.response.use(
   (error) => {
     if (error.response) {
       const { status, data } = error.response
+      const onLoginPage = window.location.pathname.startsWith('/login')
       if (status === 401) {
-        message.error('Unauthorized, please login again')
-        localStorage.removeItem('token')
-        window.location.href = '/login'
+        // 登录页上的 401 是“账号或密码错误”，不能清 token 并整页跳转：
+        // 跳转会重载页面、销毁 antd message，用户只看到页面闪一下、拿不到任何提示。
+        if (onLoginPage) {
+          message.error(extractErrorMessage(data, 'Invalid phone/email or password'))
+        } else {
+          message.error('Unauthorized, please login again')
+          localStorage.removeItem('token')
+          window.location.href = '/login'
+        }
       } else if (status === 429) {
-        message.error('Daily quota exceeded')
+        message.error(extractErrorMessage(data, 'Daily quota exceeded'))
       } else {
-        message.error(data?.message || 'Request failed')
+        message.error(extractErrorMessage(data))
       }
     } else {
       message.error('Network error')
