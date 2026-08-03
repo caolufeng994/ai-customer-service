@@ -6,6 +6,7 @@ import chromadb
 from typing import List, Dict, Any, Optional
 import logging
 from app.config import settings
+from app.core.tracing import span
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +98,19 @@ class VectorStore:
                 where = {"user_id": user_id}
             else:
                 where = {**where, "user_id": user_id}
-        try:
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=n_results,
-                where=where
-            )
-            return results
-        except Exception as e:
-            logger.error(f"Failed to query vector store: {e}")
-            raise
+        with span("vector_query", attributes={"collection": self.collection_name, "n_results": n_results}) as s_vq:
+            try:
+                results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=n_results,
+                    where=where
+                )
+                s_vq.set_attribute("matched", len(results.get("ids", [[]])[0]) if results.get("ids") else 0)
+                return results
+            except Exception as e:
+                logger.error(f"Failed to query vector store: {e}")
+                s_vq.set_status_error(str(e))
+                raise
     
     def delete_by_ids(self, ids: List[str]) -> None:
         """

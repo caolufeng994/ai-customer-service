@@ -1,10 +1,21 @@
-import { Routes, Route } from 'react-router-dom'
-import { ConfigProvider, theme } from 'antd'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { ConfigProvider, theme, Layout, Menu } from 'antd'
 import Login from './pages/Login'
 import Sessions from './pages/Sessions'
 import KnowledgeBase from './pages/KnowledgeBase'
+import Traces from './pages/Traces'
+
+const { Header, Content } = Layout
 
 function App() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const current = location.pathname.startsWith('/knowledge')
+    ? '/knowledge'
+    : location.pathname.startsWith('/traces')
+    ? '/traces'
+    : '/sessions'
+
   return (
     <ConfigProvider
       theme={{
@@ -37,12 +48,31 @@ function App() {
         },
       }}
     >
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/sessions" element={<Sessions />} />
-        <Route path="/knowledge" element={<KnowledgeBase />} />
-        <Route path="/" element={<Sessions />} />
-      </Routes>
+      <Layout style={{ minHeight: '100vh' }}>
+        <Header style={{ display: 'flex', alignItems: 'center', paddingInline: 24 }}>
+          <div style={{ color: '#5b8cff', fontWeight: 700, marginRight: 32 }}>AI 客服</div>
+          <Menu
+            mode="horizontal"
+            selectedKeys={[current]}
+            style={{ flex: 1, borderBottom: 'none' }}
+            onClick={({ key }) => navigate(key)}
+            items={[
+              { key: '/sessions', label: '会话' },
+              { key: '/knowledge', label: '知识库' },
+              { key: '/traces', label: '全链路追踪' },
+            ]}
+          />
+        </Header>
+        <Content>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/sessions" element={<Sessions />} />
+            <Route path="/knowledge" element={<KnowledgeBase />} />
+            <Route path="/traces" element={<Traces />} />
+            <Route path="/" element={<Sessions />} />
+          </Routes>
+        </Content>
+      </Layout>
     </ConfigProvider>
   )
 }

@@ -6,7 +6,7 @@ FastAPI 应用定义（Application 本体）
 """
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,11 @@ from app.core.logging import setup_logging
 from app.core.exceptions import BaseAppException
 from app.core.exception_handlers import base_app_exception_handler, generic_exception_handler
 from app.core.ratelimit import limiter  # shared slowapi instance
+from app.core.tracing import (
+    generate_trace_id,
+    set_current_trace_id,
+    reset_current_trace_id,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -104,6 +109,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Trace middleware (raw ASGI class, NOT BaseHTTPMiddleware).
+#
+# IMPORTANT: Starlette's `@app.middleware("http")` / BaseHTTPMiddleware runs the
+# endpoint in a separate task via `ensure_future`, which does NOT propagate
+# contextvars set here into the endpoint — so a span created downstream would get
+# a different (auto-minted) trace_id than the one echoed on the response. A raw
+# ASGI middleware class calls `self.app(...)` in the SAME task, so the
+# request-scoped TraceId contextvar propagates correctly to every span.
+class TraceMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        raw = None
+        for k, v in scope.get("headers", []):
+            if k.lower() in (b"x-trace-id", b"x-request-id"):
+                raw = v
+                break
+        trace_id = raw.decode("utf-8") if raw else generate_trace_id()
+        token = set_current_trace_id(trace_id)
+        # Also stash on request.state so a per-request FastAPI dependency can
+        # re-assert the contextvar inside the endpoint's own task if needed.
+        scope.setdefault("state", {})["trace_id"] = trace_id
+
+        # Echo the TraceId on the response so clients can correlate logs/traces.
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"x-trace-id", trace_id.encode("utf-8")))
+                message["headers"] = headers
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            reset_current_trace_id(token)
+
+
+app.add_middleware(TraceMiddleware)
+
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
@@ -142,13 +193,21 @@ async def custom_redoc_html():
 app.add_exception_handler(BaseAppException, base_app_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
-# Include routers
-from app.api import auth, session, knowledge, chat, feedback
-app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-app.include_router(session.router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(knowledge.router, prefix="/api/kb", tags=["knowledge"])
-app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
+# Include routers. The `trace_context` dependency re-asserts the request TraceId
+# contextvar inside each endpoint's task. The raw ASGI TraceMiddleware already sets
+# it for the common async case, but a sync endpoint runs in a threadpool where the
+# contextvar is lost — this dependency is the defense-in-depth safeguard that keeps
+# every span (sync or async) sharing the echoed TraceId.
+from app.core.tracing import trace_context
+
+_trace_dep = [Depends(trace_context)]
+from app.api import auth, session, knowledge, chat, feedback, trace as trace_router
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"], dependencies=_trace_dep)
+app.include_router(session.router, prefix="/api/sessions", tags=["sessions"], dependencies=_trace_dep)
+app.include_router(knowledge.router, prefix="/api/kb", tags=["knowledge"], dependencies=_trace_dep)
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"], dependencies=_trace_dep)
+app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"], dependencies=_trace_dep)
+app.include_router(trace_router.router, tags=["traces"], dependencies=_trace_dep)
 
 # Serve bundled Swagger UI / ReDoc assets locally (offline-friendly)
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

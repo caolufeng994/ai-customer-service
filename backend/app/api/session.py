@@ -11,6 +11,7 @@ from app.utils.dependencies import get_current_user
 from app.models.user import User
 from app.core.response import ApiResponse, PaginatedResponse
 from app.core.exceptions import BaseAppException
+from app.core.tracing import span
 
 router = APIRouter()
 
@@ -23,17 +24,18 @@ async def get_sessions(
     db: Session = Depends(get_db)
 ):
     """Get user's sessions with pagination"""
-    try:
-        sessions = SessionService.get_user_sessions(db, current_user.id, skip, limit)
-        total = len(sessions)  # In production, use COUNT query
-        return PaginatedResponse.ok(
-            data=[SessionResponse.model_validate(s) for s in sessions],
-            total=total,
-            page=skip // limit + 1,
-            page_size=limit
-        )
-    except BaseAppException as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+    with span("list_sessions", attributes={"user_id": current_user.id}):
+        try:
+            sessions = SessionService.get_user_sessions(db, current_user.id, skip, limit)
+            total = len(sessions)  # In production, use COUNT query
+            return PaginatedResponse.ok(
+                data=[SessionResponse.model_validate(s) for s in sessions],
+                total=total,
+                page=skip // limit + 1,
+                page_size=limit
+            )
+        except BaseAppException as e:
+            raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
 
 
 @router.post("", response_model=ApiResponse[SessionResponse])

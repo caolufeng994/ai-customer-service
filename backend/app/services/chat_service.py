@@ -20,6 +20,7 @@ from app.rag.llm_client import LLMClient
 from app.agent.intent_classifier import IntentClassifier, IntentCategory
 from app.agent.router import route, RouteTarget
 from app.core.exceptions import ValidationError, QuotaExceededError
+from app.core.tracing import span
 from app.config import settings
 import logging
 
@@ -244,9 +245,13 @@ class ChatService:
 
         # Step 5: 意图识别 + 策略路由（Agent 核心门控层）
         if settings.enable_intent_routing:
-            intent_result = IntentClassifier.classify(request.message)
-            intent_category = intent_result.intent
-            route_target = route(intent_category)
+            with span("intent_classify") as s_int:
+                intent_result = IntentClassifier.classify(request.message)
+                intent_category = intent_result.intent
+                s_int.set_attribute("intent", intent_category.value)
+            with span("route") as s_rt:
+                route_target = route(intent_category)
+                s_rt.set_attribute("target", route_target.value)
         else:
             # 路由关闭时退化为纯 RAG（兼容单意图 RAG 旧行为），意图仅标记为未知。
             intent_category = IntentCategory.FALLBACK
@@ -279,11 +284,16 @@ class ChatService:
                 if len(user_turns) >= 2 and len(request.message) < 20:
                     retrieval_query = f"{user_turns[-2]} {request.message}"
 
-                retrieval_results = retriever.retrieve_with_fallback(retrieval_query, request.kb_id)
+                with span("retrieve", attributes={"query": retrieval_query, "kb_id": request.kb_id}) as s_ret:
+                    retrieval_results = retriever.retrieve_with_fallback(retrieval_query, request.kb_id)
+                    s_ret.set_attribute("result_count", len(retrieval_results))
 
                 # Build context (use singleton)
                 context_builder = get_context_builder()
-                context, sources = context_builder.build_context_with_sources(retrieval_results)
+                with span("context_build") as s_ctx:
+                    context, sources = context_builder.build_context_with_sources(retrieval_results)
+                    s_ctx.set_attribute("chunks", len(retrieval_results))
+                    s_ctx.set_attribute("sources", len(sources))
 
                 if context:
                     messages = prompt_builder.build_prompt(request.message, context, prompt_history)
@@ -304,16 +314,19 @@ class ChatService:
 
             yield {"type": "status", "data": "generating"}
 
-            try:
-                for chunk in llm_client.chat_stream(messages, temperature=0.7, max_tokens=1000):
-                    full_response += chunk
-                    yield {"type": "content", "data": chunk}
-            except Exception as llm_error:
-                logger.error(f"LLM generation failed: {llm_error}")
-                # Graceful degradation: return error message instead of raising
-                full_response = "抱歉，服务暂时不可用，请稍后重试。"
-                finish_reason = "error"
-                yield {"type": "content", "data": full_response}
+            with span("llm_generate", attributes={"model": settings.dashscope_model or "unknown"}) as s_llm:
+                try:
+                    for chunk in llm_client.chat_stream(messages, temperature=0.7, max_tokens=1000):
+                        full_response += chunk
+                        yield {"type": "content", "data": chunk}
+                    s_llm.set_attribute("finish_reason", finish_reason)
+                except Exception as llm_error:
+                    logger.error(f"LLM generation failed: {llm_error}")
+                    s_llm.set_status_error(str(llm_error))
+                    # Graceful degradation: return error message instead of raising
+                    full_response = "抱歉，服务暂时不可用，请稍后重试。"
+                    finish_reason = "error"
+                    yield {"type": "content", "data": full_response}
 
             latency_ms = int((time.time() - start_time) * 1000)
 
