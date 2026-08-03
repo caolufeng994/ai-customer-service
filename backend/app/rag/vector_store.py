@@ -75,19 +75,28 @@ class VectorStore:
         self,
         query_embedding: List[float],
         n_results: int = 8,
-        where: Optional[Dict[str, Any]] = None
+        where: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Query the vector store for similar embeddings
-        
+
         Args:
             query_embedding: Query embedding vector
             n_results: Number of results to return
             where: Metadata filter conditions
-            
+            user_id: 可选按文档归属用户过滤（多租户隔离增强，默认 None=不过滤，
+                     保持单租户共享 KB 的现有行为）。仅当提供时追加 `user_id` 元数据条件。
+
         Returns:
             Dictionary containing query results
         """
+        # 多租户隔离：若提供 user_id，将其并入元数据过滤条件。
+        if user_id is not None:
+            if where is None:
+                where = {"user_id": user_id}
+            else:
+                where = {**where, "user_id": user_id}
         try:
             results = self.collection.query(
                 query_embeddings=[query_embedding],

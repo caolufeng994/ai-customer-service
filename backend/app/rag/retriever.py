@@ -82,13 +82,15 @@ class Retriever:
                 logger.error(f"Failed to load reranker model: {e}")
                 settings.enable_reranker = False
     
-    def retrieve(self, query: str, kb_id: str = "default") -> List[RetrievalResult]:
+    def retrieve(self, query: str, kb_id: str = "default", user_id: Optional[int] = None) -> List[RetrievalResult]:
         """
         Retrieve relevant chunks for a query
 
         Args:
             query: User query text
             kb_id: Knowledge base ID to filter
+            user_id: 可选按文档归属用户过滤（多租户隔离增强，默认 None=不过滤，
+                     保持单租户共享 KB 的现有行为）。
 
         Returns:
             List of retrieval results sorted by similarity
@@ -108,7 +110,8 @@ class Retriever:
             results = self.vector_store.query(
                 query_embedding=query_embedding,
                 n_results=recall_k,
-                where={"kb_id": kb_id} if kb_id else None
+                where={"kb_id": kb_id} if kb_id else None,
+                user_id=user_id,
             )
         except Exception as e:
             logger.error(f"Failed to query vector store: {e}")
@@ -189,25 +192,35 @@ class Retriever:
             logger.error(f"Reranking failed, using original order: {e}")
             return results
     
-    def retrieve_with_fallback(self, query: str, kb_id: str = "default") -> List[RetrievalResult]:
+    def retrieve_with_fallback(self, query: str, kb_id: str = "default", user_id: Optional[int] = None) -> List[RetrievalResult]:
         """
-        Retrieve with fallback to lower threshold if no results
-        
+        Retrieve with optional recall fallback.
+
+        默认不做阈值降级：若主阈值（retrieval_threshold，推荐 0.5）下无结果，
+        直接返回空，由上层走「无上下文兜底提示」。这避免了旧实现把阈值降到 0.3
+        后，将无关内容（实测相似度 0.40~0.42）重新漏入 LLM 上下文的安全隐患。
+
+        如需开启召回兜底，可在配置中设置 `retrieval_fallback_threshold`（须高于
+        无关内容带，建议 >= 0.45），仅在空结果且下限低于主阈值时按受限下限再检索一次。
+
         Args:
             query: User query text
             kb_id: Knowledge base ID to filter
-            
+
         Returns:
             List of retrieval results
         """
-        results = self.retrieve(query, kb_id)
-        
-        # If no results, try with lower threshold
-        if not results and self.similarity_threshold > 0.3:
-            logger.info("No results with threshold, trying lower threshold")
+        results = self.retrieve(query, kb_id, user_id=user_id)
+
+        # 仅当显式配置且下限低于主阈值时，才以受限下限再检索一次（默认 None => 不降级）。
+        fb = settings.retrieval_fallback_threshold
+        if not results and fb is not None and fb < self.similarity_threshold:
+            logger.info(f"No results at threshold {self.similarity_threshold}, trying floor {fb}")
             original_threshold = self.similarity_threshold
-            self.similarity_threshold = 0.3
-            results = self.retrieve(query, kb_id)
-            self.similarity_threshold = original_threshold
-        
+            self.similarity_threshold = fb
+            try:
+                results = self.retrieve(query, kb_id, user_id=user_id)
+            finally:
+                self.similarity_threshold = original_threshold
+
         return results

@@ -110,20 +110,42 @@ class TestRetriever:
 
         assert len(results) == 0
 
-    def test_retrieve_with_fallback_success(self, retriever, mock_vector_store):
-        """Test fallback mechanism when no results with initial threshold"""
-        # First call: no results with high threshold
+    def test_retrieve_with_fallback_default_no_drop(self, retriever, mock_vector_store):
+        """默认不降级：主阈值下无结果直接返回空，不降低阈值二次检索。
+
+        防止旧实现把阈值降到 0.3 后把无关内容(实测 0.40~0.42)重新漏入上下文。
+        """
+        from app.config import settings
+        settings.retrieval_fallback_threshold = None  # 默认安全值
         mock_vector_store.query.return_value = {
             'ids': [[]],
             'documents': [[]],
             'metadatas': [[]],
             'distances': [[]]
         }
-
         results = retriever.retrieve_with_fallback("test query", kb_id="default")
+        assert results == []
+        # 仅检索一次，未触发阈值降级
+        assert mock_vector_store.query.call_count == 1
 
-        # Should try lower threshold
+    def test_retrieve_with_fallback_explicit_floor(self, retriever, mock_vector_store):
+        """显式配置 retrieval_fallback_threshold 且低于主阈值时，按受限下限再检索一次。"""
+        from app.config import settings
+        settings.retrieval_fallback_threshold = 0.45  # 高于无关带(0.40~0.42)
+        # 第一次(0.6)空，第二次(0.45)返回结果
+        mock_vector_store.query.side_effect = [
+            {'ids': [[]], 'documents': [[]], 'metadatas': [[]], 'distances': [[]]},
+            {
+                'ids': [['chunkA']],
+                'documents': [['相关文档内容']],
+                'metadatas': [[{'doc_id': 1, 'doc_name': 'd.pdf', 'chunk_index': 0}]],
+                'distances': [[0.5]],  # similarity 0.5 >= 0.45
+            },
+        ]
+        results = retriever.retrieve_with_fallback("test query", kb_id="default")
         assert mock_vector_store.query.call_count == 2
+        assert len(results) == 1
+        settings.retrieval_fallback_threshold = None  # 还原
 
     def test_retrieve_top_k_limit(self, retriever, mock_vector_store):
         """Test that only top_k results are returned.

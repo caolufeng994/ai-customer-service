@@ -17,6 +17,8 @@ from app.rag.retriever import Retriever
 from app.rag.context_builder import ContextBuilder
 from app.rag.prompt_builder import PromptBuilder
 from app.rag.llm_client import LLMClient
+from app.agent.intent_classifier import IntentClassifier, IntentCategory
+from app.agent.router import route, RouteTarget
 from app.core.exceptions import ValidationError, QuotaExceededError
 from app.config import settings
 import logging
@@ -233,33 +235,68 @@ class ChatService:
         # Step 4: Get conversation history
         history = ChatService.get_conversation_history(db, session.id)
 
-        # Step 5: RAG pipeline
+        # 当前问题已作为用户消息入库，会出现在 history 末尾；构造 prompt 历史时
+        # 剔除这条刚保存的当前问题，避免它既在历史末尾、又在最终 user message
+        # 中重复出现（冗余且浪费 token）。
+        prompt_history = (
+            history[:-1] if (history and history[-1].get("role") == "user") else history
+        )
+
+        # Step 5: 意图识别 + 策略路由（Agent 核心门控层）
+        if settings.enable_intent_routing:
+            intent_result = IntentClassifier.classify(request.message)
+            intent_category = intent_result.intent
+            route_target = route(intent_category)
+        else:
+            # 路由关闭时退化为纯 RAG（兼容单意图 RAG 旧行为），意图仅标记为未知。
+            intent_category = IntentCategory.FALLBACK
+            route_target = RouteTarget.RAG
+
+        # 将识别到的意图落库到当前用户消息（Message.intent 字段），便于观测与回溯。
         try:
-            # Retrieve (use singleton)
-            retriever = get_retriever()
+            user_message.intent = intent_category.value
+            db.commit()
+        except Exception:
+            logger.debug("Failed to persist intent on user message", exc_info=False)
 
-            # 多轮对话检索优化：当前问题若过短/含指代（如"那会员折扣呢？"），
-            # 直接拿原句去向量检索容易因代词缺失而召回失败。这里用上一轮用户
-            # 问题做检索_query 改写，提升追问场景的召回率。
-            retrieval_query = request.message
-            user_turns = [m.get("content", "") for m in history if m.get("role") == "user"]
-            if len(user_turns) >= 2 and len(request.message) < 20:
-                retrieval_query = f"{user_turns[-2]} {request.message}"
+        # 初始为空；RAG 路径下会被填充，兜底路径下保持空（不检索、不注入上下文）。
+        retrieval_results: list = []
+        context = ""
+        sources: list = []
 
-            retrieval_results = retriever.retrieve_with_fallback(retrieval_query, request.kb_id)
-
-            # Build context (use singleton)
-            context_builder = get_context_builder()
-            context, sources = context_builder.build_context_with_sources(retrieval_results)
-
-            # Build prompt (use singleton)
+        try:
             prompt_builder = get_prompt_builder()
-            if context:
-                messages = prompt_builder.build_prompt(request.message, context, history)
-                finish_reason = "stop"
+
+            if route_target == RouteTarget.RAG:
+                # Retrieve (use singleton)
+                retriever = get_retriever()
+
+                # 多轮对话检索优化：当前问题若过短/含指代（如"那会员折扣呢？"），
+                # 直接拿原句去向量检索容易因代词缺失而召回失败。这里用上一轮用户
+                # 问题做检索 query 改写，提升追问场景的召回率。
+                retrieval_query = request.message
+                user_turns = [m.get("content", "") for m in history if m.get("role") == "user"]
+                if len(user_turns) >= 2 and len(request.message) < 20:
+                    retrieval_query = f"{user_turns[-2]} {request.message}"
+
+                retrieval_results = retriever.retrieve_with_fallback(retrieval_query, request.kb_id)
+
+                # Build context (use singleton)
+                context_builder = get_context_builder()
+                context, sources = context_builder.build_context_with_sources(retrieval_results)
+
+                if context:
+                    messages = prompt_builder.build_prompt(request.message, context, prompt_history)
+                    finish_reason = "stop"
+                else:
+                    messages = prompt_builder.build_fallback_prompt(request.message)
+                    finish_reason = "no_context"
             else:
+                # 兜底/未知意图：直接走无上下文兜底提示，彻底不检索、不注入任何
+                # 知识库内容，从路由层杜绝无关内容泄露（与阈值 0.5 形成双保险）。
+                logger.info(f"Intent={intent_category.value} routed to FALLBACK (no RAG)")
                 messages = prompt_builder.build_fallback_prompt(request.message)
-                finish_reason = "no_context"
+                finish_reason = "fallback"
 
             # Stream LLM response (use singleton)
             llm_client = get_llm_client()

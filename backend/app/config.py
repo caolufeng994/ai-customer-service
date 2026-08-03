@@ -4,7 +4,7 @@ Loads settings from environment variables and .env file
 """
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
-from typing import List
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
@@ -80,7 +80,20 @@ class Settings(BaseSettings):
     # 0.35(原值)会让无关查询(0.40~0.42)漏入上下文。0.5 是该分布的干净分界点，
     # 既拦截无关 query 又保留相关召回。已同步更新 API文档.md 业务规则第5条。
     retrieval_threshold: float = 0.5
+    # 检索降级阈值。None = 不做阈值降级（空结果直接走兜底提示），避免把无关内容
+    # (实测 0.40~0.42) 重新漏入上下文。若需开启召回兜底，可设为 0.45(须高于无关带)。
+    retrieval_fallback_threshold: Optional[float] = None
     max_history_rounds: int = 3
+
+    # ---- 意图识别 / 策略路由（Agent 核心层）----
+    # 是否启用意图识别与策略路由。开启后：知识类意图走 RAG 主链路，兜底/未知意图
+    # 走无上下文兜底提示，从路由层杜绝无关内容注入（双保险，与阈值 0.5 互补）。
+    enable_intent_routing: bool = True
+    # 规则分类器置信度阈值：最佳意图加权分 >= 该值才采纳，否则归为「兜底闲聊」。
+    # 关键词权重多 >=1.0，故 1.0 表示"至少命中一个有效关键词"。
+    intent_confidence_threshold: float = 1.0
+    # 规则分类低置信时是否调用 LLM 二次判定（默认关闭，保持零额外 LLM 调用与成本控制）。
+    intent_fallback_to_llm: bool = False
 
     # Rate Limiting
     global_rate_limit: str = "100/minute"  # Global RPS limit

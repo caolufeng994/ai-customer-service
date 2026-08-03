@@ -78,31 +78,43 @@ class ContextBuilder:
     def build_context_with_sources(self, retrieval_results: List[RetrievalResult]) -> tuple[str, List[dict]]:
         """
         Build context and return source information
-        
+
         Args:
             retrieval_results: List of retrieval results
-            
+
         Returns:
             Tuple of (context string, source information list)
+
+        Notes:
+            - 每个 doc_id 生成一条 source 条目（与测试约定一致：source 数 = 去重后 doc 数）。
+            - 除保留首个 chunk_id（向后兼容 ChatSource 契约）外，额外用 `chunk_ids`
+              列出该文档命中的全部 chunk，使前端来源与存入 DB 的 citations（全量）一致，
+              解决原先"按 doc_id 去重只留首个 chunk_id"导致 chunk 级引用丢失的问题。
         """
         if not retrieval_results:
             return "", []
-        
+
         # Build context
         context = self.build_context(retrieval_results)
-        
-        # Extract source information
+
+        # 收集每个 doc 命中的全部 chunk_id（按结果出现顺序，即相似度降序）
+        doc_chunk_ids: dict[int, list[str]] = {}
+        for result in retrieval_results:
+            doc_chunk_ids.setdefault(result.doc_id, []).append(result.chunk_id)
+
+        # Extract source information (one entry per doc_id)
         sources = []
         seen_docs = set()
-        
         for result in retrieval_results:
-            if result.doc_id not in seen_docs:
-                sources.append({
-                    "doc_id": result.doc_id,
-                    "doc_name": result.doc_name,
-                    "chunk_id": result.chunk_id,
-                    "score": float(result.score)
-                })
-                seen_docs.add(result.doc_id)
-        
+            if result.doc_id in seen_docs:
+                continue
+            seen_docs.add(result.doc_id)
+            sources.append({
+                "doc_id": result.doc_id,
+                "doc_name": result.doc_name,
+                "chunk_id": result.chunk_id,           # 首个 chunk（向后兼容）
+                "chunk_ids": doc_chunk_ids[result.doc_id],  # 该文档全部命中 chunk
+                "score": float(result.score),
+            })
+
         return context, sources

@@ -104,7 +104,10 @@ class KnowledgeService:
                     "doc_id": document.id,
                     "kb_id": document.kb_id,
                     "doc_name": document.name,
-                    "chunk_index": i
+                    "chunk_index": i,
+                    # 记录文档归属用户，支撑多租户检索隔离（默认检索仍按 kb_id，
+                    # 仅当调用方显式传入 user_id 时才启用过滤）。
+                    "user_id": document.user_id,
                 })
             
             # Add to vector store
