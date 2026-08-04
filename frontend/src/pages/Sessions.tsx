@@ -56,6 +56,8 @@ interface Message {
   // 防编造自检结果: grounded=false 表示答案经纠正仍含无法被知识库支撑的内容
   grounded?: boolean
   unsupported_claims?: string[]
+  // 追问引导: 回答结束后由后端生成的 2-3 个相关追问建议, 点击可直接发送
+  suggestions?: string[]
 }
 
 interface Session {
@@ -147,10 +149,9 @@ export default function Sessions() {
     }
   }
 
-  const sendMessage = async () => {
-    if (!input.trim() || !currentSession) return
-
-    const userMessage = input
+  const sendMessage = async (presetText?: string) => {
+    const userMessage = presetText ?? input
+    if (!userMessage.trim() || !currentSession) return
     setInput('')
     setMessages([...messages, { id: Date.now(), role: 'user', content: userMessage, created_at: new Date().toISOString() }])
     setLoading(true)
@@ -206,6 +207,8 @@ export default function Sessions() {
                 unsupported_claims: event.data.unsupported_claims || [],
                 // 将本次对话的思考链一并持久化,历史记录中也可回看 agent 推理过程。
                 thinking: thinkingRef.current || undefined,
+                // 追问引导: 后端在 done 事件中附带的 2-3 个相关追问建议
+                suggestions: event.data.suggestions || [],
               }
               setMessages((prev) => [...prev, assistantMessage])
               setStreamingContent('')
@@ -343,6 +346,23 @@ export default function Sessions() {
                       </Button>
                     </div>
                   )}
+                  {msg.role === 'assistant' && msg.suggestions && msg.suggestions.length > 0 && (
+                    <div className="message-suggestions">
+                      <div className="suggestions-title">你可能还想问：</div>
+                      <div className="suggestion-chips">
+                        {msg.suggestions.map((s, i) => (
+                          <Button
+                            key={i}
+                            size="small"
+                            className="suggestion-chip"
+                            onClick={() => sendMessage(s)}
+                          >
+                            {s}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </Card>
               ))}
               {(streamingContent || thinking) && (
@@ -367,14 +387,16 @@ export default function Sessions() {
                 placeholder="请输入您的问题..."
                 size="large"
                 value={input}
+                maxLength={500}
+                showCount
                 onChange={(e) => setInput(e.target.value)}
-                onPressEnter={sendMessage}
+                onPressEnter={() => sendMessage()}
                 disabled={loading}
                 suffix={
                   <Button
                     type="primary"
                     icon={<SendOutlined />}
-                    onClick={sendMessage}
+                    onClick={() => sendMessage()}
                     loading={loading}
                     size="large"
                   >

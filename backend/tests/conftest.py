@@ -2,14 +2,12 @@
 Pytest 全局配置与共享 fixtures —— 接口(API)自动化测试基础设施。
 
 设计要点(满足"严格使用 MySQL、不引入其他数据库系统"约束):
-1. 数据库:使用与生产一致的 MySQL 引擎,直接连接真实业务库 `settings.db_name`
-   (不再维护独立的 `<db_name>_test` 库)。每个测试函数内 drop_all + create_all
+1. 数据库:使用与生产一致的 MySQL 引擎,默认连独立测试库 `<db_name>_test`(自动创建),
+   不触碰真实业务库。每个测试函数内 drop_all + create_all
    (先关闭 FK 检查以保证可重放),保证用例间完全隔离、测试数据自动清理。
-   ⚠️ 重要:测试运行会重建表结构,会清空真实库中既有数据;交付前再用种子/初始化
-      脚本重建业务数据即可。这是有意为之(与"交付前再清理"的需求一致)。
-   ⚠️ 安全护栏:为防止误清空业务数据,`_reset_schema` 在业务库 `settings.db_name`
-      上执行 drop_all 前会检查 `PYTEST_ALLOW_WIPE=1`,未设置则直接报错拒绝。
-      即:测试默认不会破坏真实数据;确需清空时请显式开启该开关。
+   ⚠️ 安全护栏:`_reset_schema` 仅在连真实业务库 `settings.db_name` 时才要求
+      `PYTEST_ALLOW_WIPE=1`(防误清业务数据);连 _test 库时直接放行。
+   如需连业务库(旧行为):设 TEST_DB_NAME=<业务库名> 并显式 PYTEST_ALLOW_WIPE=1。
 2. 外部依赖隔离:mock 知识库后台文档处理(`process_document`)与聊天限流,
    避免触发真实 Embedding/Chroma/LLM 网络调用与测试间相互限流干扰。
 3. 响应封装:统一为 ApiResponse {success, code, message, data},断言时按此结构校验。
@@ -39,11 +37,34 @@ import app.services.knowledge_service as ks  # noqa: E402
 from app.config import settings  # noqa: E402
 
 
-TEST_DB_NAME = settings.db_name  # 直接使用真实业务库,不再维护独立的 _test 库
+TEST_DB_NAME = os.environ.get("TEST_DB_NAME", settings.db_name + "_test")
+# 默认使用独立测试库 <db_name>_test（仍为 MySQL，满足"不引入其他数据库系统"约束），
+# pytest 默认即可跑且不会清空真实业务数据。
+# 如需连业务库（旧行为）：设 TEST_DB_NAME=<业务库名> 并显式 PYTEST_ALLOW_WIPE=1。
 TEST_DB_URL = (
     f"mysql+pymysql://{settings.db_user}:{settings.db_password}"
     f"@{settings.db_host}:{settings.db_port}/{TEST_DB_NAME}"
 )
+
+
+def _ensure_test_db_exists():
+    """若使用独立测试库(与业务库不同)，自动幂等创建它。"""
+    if TEST_DB_NAME == settings.db_name:
+        return  # 连业务库，走 PYTEST_ALLOW_WIPE 守卫，不自动创建
+    server_url = (
+        f"mysql+pymysql://{settings.db_user}:{settings.db_password}"
+        f"@{settings.db_host}:{settings.db_port}/"
+    )
+    eng = create_engine(server_url)
+    try:
+        with eng.connect() as conn:
+            conn.exec_driver_sql(
+                f"CREATE DATABASE IF NOT EXISTS `{TEST_DB_NAME}` "
+                f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            )
+            conn.commit()
+    finally:
+        eng.dispose()
 
 
 def _reset_schema(engine):
@@ -75,6 +96,8 @@ def engine():
     中既有数据;交付前用种子/初始化脚本重建业务数据即可。默认受安全护栏保护,
     未设置 PYTEST_ALLOW_WIPE=1 时不会真的清空业务库。
     """
+    # 独立测试库：自动创建（若与业务库不同），此后连接它。
+    _ensure_test_db_exists()
     eng = create_engine(TEST_DB_URL, pool_pre_ping=True)
     yield eng
     # 测试结束后重建表结构,确保不留测试数据

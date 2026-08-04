@@ -12,7 +12,7 @@
 import asyncio
 import json
 
-from tests.helpers import register_and_login, auth_headers, make_session, make_message
+from tests.helpers import register_and_login, register_admin_and_login, auth_headers, make_session, make_message
 import app.services.chat_service as cs
 from app.core.exceptions import QuotaExceededError
 from app.core.exception_handlers import generic_exception_handler
@@ -91,7 +91,7 @@ def test_session_default_title_still_works(client):
 # --------------------------------------------------------------------------- #
 def test_kb_list_isolation_new_account_empty(client):
     # 全新账号(无文档)列表应为空 —— 验证不会泄露其它用户的文档
-    creds = register_and_login(client, email="kl02@example.com")
+    creds = register_admin_and_login(client, email="kl02@example.com")
     h = auth_headers(creds["token"])
     r = client.get("/api/kb/documents", headers=h)
     assert r.status_code == 200
@@ -99,8 +99,8 @@ def test_kb_list_isolation_new_account_empty(client):
 
 
 def test_kb_get_isolation_cross_user(client):
-    u1 = register_and_login(client, email="kl02a@example.com")
-    u2 = register_and_login(client, email="kl02b@example.com")
+    u1 = register_admin_and_login(client, email="kl02a@example.com")
+    u2 = register_admin_and_login(client, email="kl02b@example.com")
     h1, h2 = auth_headers(u1["token"]), auth_headers(u2["token"])
     doc_id = client.post(
         "/api/kb/documents", files={"file": ("doc.txt", b"hi", "text/plain")}, headers=h1
@@ -112,8 +112,8 @@ def test_kb_get_isolation_cross_user(client):
 
 
 def test_kb_delete_isolation_cross_user(client):
-    u1 = register_and_login(client, email="kl02c@example.com")
-    u2 = register_and_login(client, email="kl02d@example.com")
+    u1 = register_admin_and_login(client, email="kl02c@example.com")
+    u2 = register_admin_and_login(client, email="kl02d@example.com")
     h1, h2 = auth_headers(u1["token"]), auth_headers(u2["token"])
     doc_id = client.post(
         "/api/kb/documents", files={"file": ("doc.txt", b"hi", "text/plain")}, headers=h1

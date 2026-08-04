@@ -5,11 +5,12 @@ GET    /api/kb/documents
 DELETE /api/kb/documents/{id}
 注:后台文档处理(process_document)已在 conftest 中 mock,避免触发真实 Embedding/Chroma。
 """
-from tests.helpers import register_and_login, auth_headers
+from tests.helpers import register_admin_and_login, auth_headers
 
 
 def _login(client):
-    return register_and_login(client, email="kb@example.com")
+    # 知识库管理接口要求 admin 角色,故用 admin 账号登录。
+    return register_admin_and_login(client, email="kb@example.com")
 
 
 def test_upload_no_auth(client):

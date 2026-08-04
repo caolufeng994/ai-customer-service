@@ -1,7 +1,6 @@
 """
 Embedder Module
-Handles text embedding with batch processing
-Supports both DashScope (cloud) and local models
+Handles text embedding with batch processing (DashScope cloud model)
 """
 from typing import List
 import logging
@@ -23,10 +22,10 @@ class Embedder:
         Initialize embedder
         
         Args:
-            provider: Embedding provider (dashscope or local). Uses config default if None
+            provider: Embedding provider (currently only 'dashscope'). Uses config default if None
         """
         self.provider = provider or settings.embedding_provider
-        self.model = settings.embedding_model if self.provider == "dashscope" else settings.local_embedding_model
+        self.model = settings.embedding_model
         
         if self.provider == "dashscope":
             self.client = OpenAI(
@@ -35,16 +34,8 @@ class Embedder:
                 timeout=30.0,
                 max_retries=2
             )
-        elif self.provider == "local":
-            try:
-                from sentence_transformers import SentenceTransformer
-                self.model_instance = SentenceTransformer(self.model)
-                logger.info(f"Loaded local embedding model: {self.model}")
-            except ImportError:
-                logger.error("sentence-transformers not installed. Install with: pip install sentence-transformers")
-                raise ImportError("sentence-transformers is required for local embedding")
         else:
-            raise ValueError(f"Unsupported embedding provider: {self.provider}")
+            raise ValueError(f"Unsupported embedding provider: {self.provider} (only 'dashscope' is supported)")
     
     def embed(self, text: str) -> List[float]:
         """
@@ -91,21 +82,8 @@ class Embedder:
                 except Exception as e:
                     logger.error(f"Failed to embed batch: {e}")
                     raise RuntimeError(f"Embedding service unavailable: {e}")
-
-        elif self.provider == "local":
-            # Local embedding with sentence-transformers
-            try:
-                embeddings = self.model_instance.encode(
-                    texts,
-                    batch_size=batch_size,
-                    show_progress_bar=False,
-                    convert_to_numpy=True
-                )
-                all_embeddings = embeddings.tolist()
-                logger.debug(f"Embedded {len(texts)} texts with local model")
-            except Exception as e:
-                logger.error(f"Failed to embed with local model: {e}")
-                raise RuntimeError(f"Local embedding service unavailable: {e}")
+        else:
+            raise ValueError(f"Unsupported embedding provider: {self.provider} (only 'dashscope' is supported)")
         
         return all_embeddings
     
@@ -114,18 +92,11 @@ class Embedder:
         Get embedding dimension
         
         Returns:
-            Dimension of the embedding vectors
+            Dimension of the embedding vectors (DashScope text-embedding-v3 = 1024)
         """
         if self.provider == "dashscope":
             return 1024  # DashScope text-embedding-v3 is 1024 dimensions
-        elif self.provider == "local":
-            # Try to get dimension from model
-            try:
-                test_embedding = self.model_instance.encode("test")
-                return len(test_embedding)
-            except:
-                return 768  # Common dimension for small models
-        return 1024  # Default
+        raise ValueError(f"Unsupported embedding provider: {self.provider} (only 'dashscope' is supported)")
     
     def retry_embed(self, text: str, max_retries: int = 3) -> List[float]:
         """

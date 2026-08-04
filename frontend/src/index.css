@@ -387,3 +387,70 @@ body {
   color: #5b8cff;
   background: #f0f5ff;
 }
+
+/* 追问引导建议 chips */
+.message-suggestions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e8e8e8;
+}
+
+.suggestions-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggestion-chip {
+  border: 1px solid #d6e4ff;
+  background: #f0f5ff;
+  color: #4a7bef;
+  border-radius: 16px;
+}
+
+.suggestion-chip:hover {
+  background: #e6f0ff;
+  border-color: #5b8cff;
+  color: #2a5bd7;
+}
+
+/* 管理后台 */
+.admin-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.admin-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 24px;
+}
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.chart-card,
+.table-card {
+  margin-bottom: 24px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.empty-hint {
+  color: #999;
+  text-align: center;
+  padding: 40px 0;
+}

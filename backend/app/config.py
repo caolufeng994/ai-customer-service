@@ -47,11 +47,10 @@ class Settings(BaseSettings):
     # DashScope 对话模型(真实可用,免费额度覆盖): qwen-plus / qwen-max / qwen-turbo 等
     dashscope_model: str = "qwen-plus"
 
-    # Embedding
-    embedding_provider: str = "dashscope"
+    # Embedding（仅支持 DashScope 云端向量模型，本地 local/bge 方案已移除）
+    embedding_provider: str = "dashscope"  # 当前仅支持 dashscope
     # 真实可用的 DashScope 文本向量模型(默认输出 1024 维,与 Chroma 维度兼容)
     embedding_model: str = "text-embedding-v3"
-    local_embedding_model: str = "bge-small-zh-v1.5"
     
     # Vector Database
     chroma_persist_dir: str = Field(
@@ -126,7 +125,7 @@ class Settings(BaseSettings):
     retrieval_recall_k: int = 20  # Recall top-k before reranking
 
     # Follow-up Suggestions
-    enable_followup_suggestions: bool = False  # Enable follow-up question suggestions
+    enable_followup_suggestions: bool = True   # 启用追问引导：回答结束自动生成 2-3 个相关追问建议
 
     # Citation Verification (弱校验: 仅检查 [K编号] 是否在 1..N 范围, 不校验事实一致性)
     enable_citation_verification: bool = True  # Enable citation [K编号] range check
@@ -148,6 +147,15 @@ class Settings(BaseSettings):
     enable_thinking_display: bool = True
     # 思维链生成的最大 token 数(控制思考长度,避免过长拖慢首字)。
     thinking_max_tokens: int = 350
+
+    # 标准兜底话术(检索不到相关知识 / 兜底意图时直接返回, 不走 LLM, 零编造)
+    fallback_message: str = "抱歉，我在知识库中未检索到与您问题相关的信息，暂时无法回答。如有需要，请联系人工客服。"
+
+    # 管理员引导创建（首次启动自动建一个 admin 账号，幂等；已存在则跳过；生产可设 enabled=false 后手工管理）
+    admin_bootstrap_enabled: bool = True
+    admin_bootstrap_email: Optional[str] = None
+    admin_bootstrap_phone: Optional[str] = None
+    admin_bootstrap_password: str = "Admin@123456"
     
     class Config:
         env_file = ".env"

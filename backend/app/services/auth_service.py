@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.user import User
 from app.schemas.auth import RegisterRequest, LoginRequest
-from app.utils.auth import generate_salt, hash_password, verify_password, create_access_token
+from app.utils.auth import hash_password, verify_password, create_access_token
 from app.core.exceptions import ValidationError, AuthenticationError, NotFoundError
 
 
@@ -38,14 +38,16 @@ class AuthService:
                 raise ValidationError("Email already registered")
         
         # Create new user
-        salt = generate_salt()
-        password_hash = hash_password(request.password, salt)
-        
+        # bcrypt 哈希自带 salt，无需维护自定义 salt 列（users.salt 已废弃为 nullable）。
+        password_hash = hash_password(request.password)
+
         user = User(
             phone=request.phone,
             email=request.email,
             password_hash=password_hash,
-            salt=salt
+            # 注册接口一律视为普通用户; 管理员只能由启动引导/admin 引导流程创建,
+            # 绝不能通过公开注册入口拿到 admin 角色(否则越权)。
+            role="user"
         )
         
         db.add(user)
@@ -66,11 +68,11 @@ class AuthService:
             raise AuthenticationError("Invalid phone/email or password")
         
         # Verify password
-        if not verify_password(request.password, user.salt, user.password_hash):
+        if not verify_password(request.password, user.password_hash):
             raise AuthenticationError("Invalid phone/email or password")
         
         # Create access token
-        token_data = {"sub": str(user.id), "phone": user.phone, "email": user.email}
+        token_data = {"sub": str(user.id), "phone": user.phone, "email": user.email, "role": user.role}
         token = create_access_token(token_data)
         
         return user, token

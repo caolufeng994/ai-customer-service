@@ -22,7 +22,6 @@ class SessionResponse(BaseModel):
     id: int
     user_id: int
     title: str
-    intent_tag: Optional[str]
     msg_count: int
     created_at: datetime
     updated_at: datetime

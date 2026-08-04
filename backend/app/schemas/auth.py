@@ -37,6 +37,7 @@ class UserResponse(BaseModel):
     id: int
     phone: Optional[str]
     email: Optional[str]
+    role: str = "user"   # user=普通用户, admin=管理员
     created_at: datetime
     
     class Config:

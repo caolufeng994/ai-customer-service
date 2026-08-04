@@ -48,3 +48,19 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": e.code, "message": e.message}
         )
+
+
+async def get_current_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Dependency to get current authenticated admin user.
+
+    普通用户(role != 'admin')访问受保护的管理接口时返回 403 FORBIDDEN。
+    与 get_current_user 复用同一套鉴权, 仅多一层角色校验。
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "FORBIDDEN", "message": "需要管理员权限"},
+        )
+    return current_user

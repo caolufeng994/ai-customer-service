@@ -26,8 +26,11 @@ export default function Login() {
       }
       const response = await request.post('/auth/login', payload)
       localStorage.setItem('token', response.data.token)
+      // 持久化当前用户信息(含 role), 供 App 按角色控制菜单与路由(普通用户/管理员)
+      localStorage.setItem('user', JSON.stringify(response.data.user))
       message.success('登录成功')
-      navigate('/sessions')
+      // 管理员跳管理后台, 普通用户进会话页
+      navigate(response.data.user?.role === 'admin' ? '/admin' : '/sessions')
     } catch (error) {
       // Error handled by interceptor
     } finally {

@@ -93,8 +93,7 @@ graph TB
 **功能**: 将文本转换为向量表示
 
 **支持模型**:
-- DashScope: text-embedding-v3（1024维）
-- 本地: sentence-transformers（768维）
+- DashScope: text-embedding-v3（1024维，当前唯一支持的嵌入提供方；本地 sentence-transformers 方案已移除）
 
 **关键方法**:
 - `embed()`: 单文本向量化
@@ -104,7 +103,7 @@ graph TB
 **设计要点**:
 - 批量处理提升效率
 - 指数退避重试机制
-- 支持云端和本地模型切换
+- 仅支持云端 DashScope（本地模型切换路径已移除）
 
 ---
 
@@ -162,6 +161,14 @@ graph TB
 - 内容去重
 - 按相似度排序
 
+**大规模检索 LLM 执行保障（L1-L4 算子，对应笔试题加分项）**:
+- **L1 重排（cross-encoder）**：对 top_k 召回结果用 cross-encoder 重排，融合规则分数。`enable_reranker` 控制，**默认关闭**（小语料下 top_k=8 已足够；启用需 `sentence-transformers`/`FlagEmbedding` 依赖与 `BAAI/bge-reranker-v2-m3` 模型）。
+- **L2 三明治布局**：高置信块置顶+置底（首尾注意力权重高），中低置信居中。**默认启用**。
+- **L3 分层摘要（Map-Reduce）**：召回片段过多时，Map 逐块摘要→Reduce 汇总，防 token 溢出与注意力稀释。**默认关闭**（小语料无需；大语料开启）。
+- **L4 校验**：剔除 [K编号] 越界/低分块，与引用一致性核对。**默认启用**。
+
+> 设计取舍：L1/L3 默认关闭是针对当前小语料（3 篇种子文档、15~29 块）的务实选择，避免引入重模型下载开销；大语料场景开启 L1/L3 可进一步保障"不遗漏关键规则、不因信息过载产生幻觉"。
+
 **关键方法**:
 - `build_context()`: 构建上下文
 - `build_context_with_sources()`: 构建上下文并返回来源
@@ -210,13 +217,12 @@ graph TB
 **功能**: 调用大语言模型生成回答
 
 **支持模型**:
-- DashScope: qwen-plus
-- 本地: Ollama（可配置）
+- DashScope: qwen-plus（通义千问，当前唯一支持的大模型提供方）
 
 **关键方法**:
 - `chat()`: 非流式对话
 - `chat_stream()`: 流式对话
-- `fallback_to_ollama()`: 降级到本地模型
+- `fallback_to_ollama()`: 降级到本地模型（已移除，当前 LLM 异常统一返回错误）
 
 **设计要点**:
 - 统一接口抽象

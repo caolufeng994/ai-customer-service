@@ -16,7 +16,10 @@ class User(Base):
     phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, unique=True, index=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 已废弃: bcrypt 哈希自带 salt, 自定义 salt 列不参与计算。保留为 nullable 仅向后兼容既有库。
+    salt: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)
+    # 用户角色: "user"=普通用户(仅可使用对话页), "admin"=管理员(可见会话/知识库管理/统计页)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="user", comment="user=普通用户, admin=管理员")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (

@@ -37,6 +37,32 @@ def register_and_login(client, email="user@example.com", password="password123")
     return {"token": data["token"], "user_id": data["user"]["id"]}
 
 
+def register_admin_and_login(client, email="admin@example.com", password="password123"):
+    """
+    注册一个用户并提升为 admin 角色后登录,返回 {"token", "user_id"}。
+    用于需要管理员权限的接口测试(知识库管理/统计页)。
+    依赖 conftest 的 client fixture 已把 app.database.SessionLocal 指向测试库。
+    """
+    reg = register_user(client, email=email, password=password)
+    assert reg.status_code == 200, f"注册失败: {reg.text}"
+    # 提升为 admin
+    import app.database as db_mod
+    from app.models.user import User
+    s = db_mod.SessionLocal()
+    try:
+        user = s.query(User).filter(User.email == email).first()
+        assert user is not None, "注册后未查到用户"
+        user.role = "admin"
+        s.commit()
+    finally:
+        s.close()
+    # 重新登录,使 JWT 携带 role=admin
+    login = login_user(client, email, password)
+    assert login.status_code == 200, f"登录失败: {login.text}"
+    data = login.json()["data"]
+    return {"token": data["token"], "user_id": data["user"]["id"]}
+
+
 def auth_headers(token):
     """根据 token 生成 Authorization 请求头。"""
     return {"Authorization": f"Bearer {token}"}

@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(20) NULL,
     email VARCHAR(255) NULL,
     password_hash VARCHAR(255) NOT NULL,
-    salt VARCHAR(64) NOT NULL,
+    salt VARCHAR(64) NULL COMMENT '已废弃: bcrypt 哈希自带 salt, 此列不参与计算, 保留向后兼容',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     
     UNIQUE KEY uk_phone (phone),
@@ -170,6 +170,6 @@ COMMENT 'Daily usage quota tracking table';
 
 -- Insert a test user (password: test123 - hashed with bcrypt)
 -- In production, use proper password hashing
-INSERT INTO users (phone, email, password_hash, salt) VALUES
-('13800138000', 'test@example.com', '$2b$12$placeholder_hash', 'placeholder_salt')
+INSERT INTO users (phone, email, password_hash) VALUES
+('13800138000', 'test@example.com', '$2b$12$placeholder_hash')
 ON DUPLICATE KEY UPDATE phone=phone;

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.knowledge import DocumentResponse, DocumentUploadResponse
 from app.services.knowledge_service import KnowledgeService
-from app.utils.dependencies import get_current_user
+from app.utils.dependencies import get_current_admin
 from app.models.user import User
 from app.core.response import ApiResponse
 from app.core.exceptions import BaseAppException, ValidationError
@@ -34,7 +34,7 @@ def _validate_file_ext(filename: str) -> str:
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -88,7 +88,7 @@ async def upload_document(
 
 @router.get("/documents", response_model=ApiResponse[list[DocumentResponse]])
 async def get_documents(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """Get all documents in the knowledge base"""
@@ -104,7 +104,7 @@ async def get_documents(
 @router.delete("/documents/{document_id}", response_model=ApiResponse)
 async def delete_document(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """Delete a document from the knowledge base"""
@@ -118,7 +118,7 @@ async def delete_document(
 @router.get("/documents/{document_id}", response_model=ApiResponse[DocumentResponse])
 async def get_document(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """Get a single knowledge-base document by ID"""
@@ -135,7 +135,7 @@ async def update_document(
     background_tasks: BackgroundTasks,
     name: Optional[str] = Form(None, max_length=255, description="New document name (optional)"),
     file: UploadFile = File(None, description="New file to re-ingest (optional)"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """

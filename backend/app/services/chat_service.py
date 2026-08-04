@@ -359,6 +359,49 @@ class ChatService:
 
             yield {"type": "status", "data": "generating"}
 
+            # —— 兜底话术(标准、固定、零编造) ——
+            # 当意图被路由到 FALLBACK, 或 RAG 检索为空(no_context)时, 不注入任何知识库
+            # 上下文, 也**不调用 LLM**, 直接以配置中的标准兜底话术作为回答。这样做:
+            #   1) 话术固定一致, 不会每次生成不同文案;
+            #   2) 彻底杜绝编造(没有任何上下文可供编造);
+            #   3) 省去一次 LLM 调用, 降低延迟与成本。
+            # thinking 阶段仍照常展示(让前端保持"思考中->回答"的连贯观感)。
+            if finish_reason in ("fallback", "no_context"):
+                full_response = settings.fallback_message
+                # finish_reason 保持为路由原因("fallback"/"no_context"), 便于前端/测试区分;
+                # 固定兜底话术仅作为响应内容, 不改变 finish_reason 语义。
+                for chunk in ChatService._stream_verified_text(full_response):
+                    yield {"type": "content", "data": chunk}
+
+                latency_ms = int((time.time() - start_time) * 1000)
+                token_out = len(full_response) // 4
+
+                assistant_message = ChatService.save_assistant_message(
+                    db=db,
+                    session_id=session.id,
+                    content=full_response,
+                    token_in=0,
+                    token_out=token_out,
+                    latency_ms=latency_ms,
+                    finish_reason=finish_reason,
+                    citations=[],
+                    # 兜底话术不是基于知识库作答, 标记 grounded=True(无未支撑声明), 无 unsupported_claims。
+                    grounded=True,
+                    unsupported_claims=[],
+                )
+                session.msg_count += 1
+                db.commit()
+
+                done_data = {
+                    "message_id": assistant_message.id,
+                    "finish_reason": finish_reason,
+                    "sources": [],
+                    "grounded": True,
+                    "suggestions": [],
+                }
+                yield {"type": "done", "data": done_data}
+                return
+
             # —— 生成回答(先缓冲, 再做防编造自检, 最后才把"已验证"内容推给前端) ——
             # 采用"拦截式": 用户看到的回答一定经过忠实度校验/纠正, 避免先显编造再撤回。
             raw_chunks = []

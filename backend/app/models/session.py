@@ -17,7 +17,6 @@ class Session(Base):
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="新对话")
-    intent_tag: Mapped[str] = mapped_column(String(50), nullable=True)
     msg_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=True)
@@ -30,6 +29,5 @@ class Session(Base):
 
     __table_args__ = (
         Index('idx_user_updated', 'user_id', 'updated_at'),
-        Index('idx_intent', 'intent_tag'),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )

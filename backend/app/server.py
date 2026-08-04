@@ -43,6 +43,16 @@ async def lifespan(app: FastAPI):
         logger.critical("Database initialization failed: %s", e)
         raise
 
+    # 引导创建管理员账号(幂等, 非致命): 已存在则跳过, 未配置则跳过。
+    # 保证系统始终至少有一个 admin, 且普通用户无法经公开注册拿到 admin 角色。
+    # 测试模式下跳过: TestClient 的 lifespan 会触发本调用, 避免在 _test 库建 admin 污染用例。
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            from app.services.admin_bootstrap import ensure_admin
+            ensure_admin()
+        except Exception as e:  # pragma: no cover - 尽力而为, 不阻断启动
+            logger.warning("Admin bootstrap error (non-fatal): %s", e)
+
     # Optionally seed the knowledge base from seed_docs so the RAG chain is
     # testable right after startup. Controlled by AUTO_INIT_KB (default off) to
     # avoid triggering network embeddings on every boot. Idempotent: already
@@ -200,12 +210,13 @@ app.add_exception_handler(Exception, generic_exception_handler)
 from app.core.tracing import trace_context
 
 _trace_dep = [Depends(trace_context)]
-from app.api import auth, session, knowledge, chat, feedback, trace as trace_router
+from app.api import auth, session, knowledge, chat, feedback, trace as trace_router, stats
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"], dependencies=_trace_dep)
 app.include_router(session.router, prefix="/api/sessions", tags=["sessions"], dependencies=_trace_dep)
 app.include_router(knowledge.router, prefix="/api/kb", tags=["knowledge"], dependencies=_trace_dep)
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"], dependencies=_trace_dep)
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"], dependencies=_trace_dep)
+app.include_router(stats.router, prefix="/api/stats", tags=["admin-stats"], dependencies=_trace_dep)
 app.include_router(trace_router.router, tags=["traces"], dependencies=_trace_dep)
 
 # Serve bundled Swagger UI / ReDoc assets locally (offline-friendly)
