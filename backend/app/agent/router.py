@@ -20,7 +20,8 @@ from app.agent.intent_classifier import IntentCategory
 class RouteTarget(str, Enum):
     """处理链路目标。"""
     RAG = "rag"            # 走知识库检索生成主链路
-    FALLBACK = "fallback"  # 走无上下文兜底提示（不检索）
+    DIRECT = "direct"      # 闲聊/身份/越界意图：不检索，由 LLM 直接对话式回答（含机器人身份设定）
+    FALLBACK = "fallback"  # 历史兼容保留；当前路由不再产出，仅作未知枚举的兜底占位
 
 
 # 知识类意图：进入 RAG 主链路检索知识库。
@@ -38,8 +39,11 @@ def route(intent: IntentCategory) -> RouteTarget:
     """将意图映射到处理链路。
 
     纯函数，O(1) 集合查询，单分发、终态、无循环。
-    未知/兜底意图一律收敛到 FALLBACK，保证无遗漏分支。
+    知识类意图 → RAG（检索知识库后生成）；
+    兜底/未知意图（闲聊、身份、越界等）→ DIRECT（由 LLM 直接对话式回答，不检索）。
+    注意：知识库「检索为空(no_context)」的兜底话术由 chat_service 在 RAG 分支内单独处理，
+    与意图层面的 DIRECT 路由是两回事，不要混淆。
     """
     if intent in KNOWLEDGE_INTENTS:
         return RouteTarget.RAG
-    return RouteTarget.FALLBACK
+    return RouteTarget.DIRECT

@@ -2,8 +2,9 @@
 Embedder Module
 Handles text embedding with batch processing (DashScope cloud model)
 """
-from typing import List
+from typing import List, Optional
 import logging
+import time
 from openai import OpenAI
 from app.config import settings
 
@@ -70,18 +71,33 @@ class Embedder:
             # Cloud embedding with DashScope
             for i in range(0, len(texts), batch_size):
                 batch = texts[i:i + batch_size]
-                try:
-                    response = self.client.embeddings.create(
-                        model=self.model,
-                        input=batch,
-                        dimensions=1024
-                    )
-                    embeddings = [item.embedding for item in response.data]
-                    all_embeddings.extend(embeddings)
-                    logger.debug(f"Embedded batch {i//batch_size + 1}: {len(batch)} texts")
-                except Exception as e:
-                    logger.error(f"Failed to embed batch: {e}")
-                    raise RuntimeError(f"Embedding service unavailable: {e}")
+                batch_embeddings = None
+                last_err: Optional[Exception] = None
+                # 整批失败时在客户端 max_retries 之上再做一次指数退避重试,
+                # 缓解偶发的网络抖动 / 限流(429),避免单个批次失败就让整篇
+                # 文档被标记为 failed。
+                for attempt in range(3):
+                    try:
+                        response = self.client.embeddings.create(
+                            model=self.model,
+                            input=batch,
+                            dimensions=1024
+                        )
+                        batch_embeddings = [item.embedding for item in response.data]
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        last_err = e
+                        logger.warning(
+                            f"Embed batch {i // batch_size + 1} attempt "
+                            f"{attempt + 1}/3 failed: {e}"
+                        )
+                        if attempt < 2:
+                            time.sleep(2 ** attempt)  # 1s, 2s 退避
+                if batch_embeddings is None:
+                    logger.error(f"Failed to embed batch after retries: {last_err}")
+                    raise RuntimeError(f"Embedding service unavailable: {last_err}")
+                all_embeddings.extend(batch_embeddings)
+                logger.debug(f"Embedded batch {i//batch_size + 1}: {len(batch)} texts")
         else:
             raise ValueError(f"Unsupported embedding provider: {self.provider} (only 'dashscope' is supported)")
         

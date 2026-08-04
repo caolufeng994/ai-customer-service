@@ -2,7 +2,7 @@
 Knowledge base API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
-from typing import Optional
+from typing import Optional, List
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.knowledge import DocumentResponse, DocumentUploadResponse
@@ -30,58 +30,75 @@ def _validate_file_ext(filename: str) -> str:
     return file_ext
 
 
-@router.post("/documents", response_model=ApiResponse[DocumentUploadResponse])
+@router.post("/documents", response_model=ApiResponse[List[DocumentUploadResponse]])
 async def upload_document(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Upload a document to the knowledge base
-    Processing is done asynchronously in the background
-    """
-    # Validate file type
-    file_ext = _validate_file_ext(file.filename)
+    Upload one or more documents to the knowledge base.
 
-    # Validate file size (10MB limit)
-    file_size = 0
-    content = await file.read()
-    file_size = len(content)
-    
-    if file_size > 10 * 1024 * 1024:  # 10MB
+    Accepts multiple files in a single request (each part named ``file``).
+    All files are validated up front (type + 10MB size limit) before any
+    document record is created, so a bad file never leaves a half-created
+    record behind. Each valid file is then processed asynchronously in the
+    background. The response is a list with one entry per uploaded file.
+    """
+    if not file:
         raise HTTPException(
             status_code=400,
-            detail={"code": "FILE_TOO_LARGE", "message": "File size exceeds 10MB limit"}
+            detail={"code": "NO_FILE", "message": "No file provided"},
         )
-    
+
+    # ---- Pass 1: validate every file before touching the DB ----
+    validated: List[tuple[UploadFile, str, bytes]] = []
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB per file
+    for f in file:
+        file_ext = _validate_file_ext(f.filename)  # raises 400 on bad type
+        content = await f.read()
+        if len(content) > MAX_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "FILE_TOO_LARGE",
+                    "message": f"'{f.filename}' exceeds the 10MB limit",
+                },
+            )
+        validated.append((f, file_ext, content))
+
+    # ---- Pass 2: create records + schedule background processing ----
+    results: List[DocumentUploadResponse] = []
     try:
-        # Create document record
-        document = KnowledgeService.create_document_record(
-            db=db,
-            user_id=current_user.id,
-            file_name=file.filename,
-            file_type=file_ext,
-            file_size=file_size
-        )
-        
-        # Add background task for processing
-        background_tasks.add_task(
-            KnowledgeService.process_document,
-            db=db,
-            document_id=document.id,
-            file_content=content
-        )
-        
-        return ApiResponse.ok(
-            data=DocumentUploadResponse(
+        for file, file_ext, content in validated:
+            document = KnowledgeService.create_document_record(
+                db=db,
+                user_id=current_user.id,
+                file_name=file.filename,
+                file_type=file_ext,
+                file_size=len(content),
+            )
+            background_tasks.add_task(
+                KnowledgeService.process_document,
+                db=db,
                 document_id=document.id,
-                status="processing",
-                message="Document uploaded and processing started"
-            ),
-            message="Document uploaded successfully"
+                file_content=content,
+            )
+            results.append(
+                DocumentUploadResponse(
+                    document_id=document.id,
+                    file_name=file.filename,
+                    status="processing",
+                    message="Document uploaded and processing started",
+                )
+            )
+
+        return ApiResponse.ok(
+            data=results,
+            message=f"{len(results)} document(s) uploaded successfully",
         )
-        
+
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
 

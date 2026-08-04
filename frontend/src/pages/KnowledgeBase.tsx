@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Upload, Tag, message, Modal } from 'antd'
+import { Table, Button, Upload, Tag, message, Modal, Tooltip } from 'antd'
 import { UploadOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import request from '../utils/request'
@@ -62,7 +62,7 @@ export default function KnowledgeBase() {
       await request.post('/kb/documents', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      message.success('文档上传成功')
+      message.success(`已提交 ${fileList.length} 个文件，开始处理`)
       setFileList([])
       loadDocuments()
     } catch (error) {
@@ -122,9 +122,17 @@ export default function KnowledgeBase() {
       dataIndex: 'status',
       key: 'status',
       width: 120,
-      render: (status: string) => (
-        <Tag color={STATUS_COLOR[status]}>{STATUS_TEXT[status] ?? status}</Tag>
-      ),
+      render: (status: string, record: Document) => {
+        const tag = <Tag color={STATUS_COLOR[status]}>{STATUS_TEXT[status] ?? status}</Tag>
+        if (status === 'failed' && record.error_msg) {
+          return (
+            <Tooltip title={`失败原因：${record.error_msg}`} placement="topLeft">
+              {tag}
+            </Tooltip>
+          )
+        }
+        return tag
+      },
     },
     {
       title: '创建时间',
@@ -159,6 +167,7 @@ export default function KnowledgeBase() {
         </div>
         <div className="kb-actions">
           <Upload
+            multiple
             fileList={fileList}
             onChange={({ fileList }) => setFileList(fileList)}
             beforeUpload={() => false}

@@ -155,7 +155,9 @@ class Settings(BaseSettings):
     admin_bootstrap_enabled: bool = True
     admin_bootstrap_email: Optional[str] = None
     admin_bootstrap_phone: Optional[str] = None
-    admin_bootstrap_password: str = "Admin@123456"
+    # 注意: 此默认值仅为占位符, 仅当 .env 未提供 ADMIN_BOOTSTRAP_PASSWORD 时生效。
+    # 真实管理员密码必须写在 git 忽略的 .env 中, 切勿使用此占位符作为生产密码。
+    admin_bootstrap_password: str = "Admin@ChangeMe123!"
     
     class Config:
         env_file = ".env"

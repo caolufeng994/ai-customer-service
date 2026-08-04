@@ -28,8 +28,10 @@ def test_upload_success_txt(client):
     body = r.json()
     assert body["success"] is True
     data = body["data"]
-    assert isinstance(data["document_id"], int)
-    assert data["status"] == "processing"
+    # 多文件上传后,data 为列表(单文件也是长度为 1 的列表)
+    assert isinstance(data, list) and len(data) == 1
+    assert isinstance(data[0]["document_id"], int)
+    assert data[0]["status"] == "processing"
 
 
 def test_upload_success_md(client):
@@ -63,10 +65,31 @@ def test_upload_success_docx(client):
     }
     r = client.post("/api/kb/documents", files=files, headers=h)
     assert r.status_code == 200
-    assert r.json()["data"]["status"] == "processing"
+    assert r.json()["data"][0]["status"] == "processing"
 
     listed = client.get("/api/kb/documents", headers=h).json()["data"]
     assert any(d["name"] == "policy.docx" and d["file_type"] == "docx" for d in listed)
+
+
+def test_upload_multiple_files(client):
+    """一次请求上传多个文件,全部应落库并在列表中可见。"""
+    creds = _login(client)
+    h = auth_headers(creds["token"])
+    files = [
+        ("file", ("a.txt", b"hello", "text/plain")),
+        ("file", ("b.md", "# FAQ\nQ1: how to refund?\nA1: apply in 7 days".encode("utf-8"), "text/markdown")),
+    ]
+    r = client.post("/api/kb/documents", files=files, headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    data = body["data"]
+    assert isinstance(data, list) and len(data) == 2
+    assert all(d["status"] == "processing" for d in data)
+
+    ids = [d["document_id"] for d in data]
+    listed = client.get("/api/kb/documents", headers=h).json()["data"]
+    assert all(i in [d["id"] for d in listed] for i in ids)
 
 
 def test_upload_invalid_type(client):
@@ -99,7 +122,7 @@ def test_get_documents(client):
     r = client.get("/api/kb/documents", headers=h)
     assert r.status_code == 200
     ids = [d["id"] for d in r.json()["data"]]
-    assert up["document_id"] in ids
+    assert up[0]["document_id"] in ids
 
 
 def test_get_documents_no_auth(client):
@@ -115,7 +138,7 @@ def test_delete_document(client):
         files={"file": ("doc.txt", b"hi", "text/plain")},
         headers=h,
     ).json()["data"]
-    r = client.delete(f"/api/kb/documents/{up['document_id']}", headers=h)
+    r = client.delete(f"/api/kb/documents/{up[0]['document_id']}", headers=h)
     assert r.status_code == 200
     lst = client.get("/api/kb/documents", headers=h).json()["data"]
     assert all(d["id"] != up["document_id"] for d in lst)

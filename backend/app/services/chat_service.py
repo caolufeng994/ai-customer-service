@@ -325,12 +325,18 @@ class ChatService:
                 else:
                     messages = prompt_builder.build_fallback_prompt(request.message)
                     finish_reason = "no_context"
+            elif route_target == RouteTarget.DIRECT:
+                # 闲聊 / 身份 / 越界意图：不检索知识库，由 LLM 直接对话式回答
+                # （含机器人身份设定），如「你是谁」「你好」「谢谢」等应给出真实回答，
+                # 而非「知识库未检索到」这类仅适用于 RAG 检索为空的兜底话术。
+                logger.info(f"Intent={intent_category.value} routed to DIRECT (no RAG, direct LLM answer)")
+                messages = prompt_builder.build_direct_prompt(request.message)
+                finish_reason = "direct"
             else:
-                # 兜底/未知意图：直接走无上下文兜底提示，彻底不检索、不注入任何
-                # 知识库内容，从路由层杜绝无关内容泄露（与阈值 0.5 形成双保险）。
-                logger.info(f"Intent={intent_category.value} routed to FALLBACK (no RAG)")
-                messages = prompt_builder.build_fallback_prompt(request.message)
-                finish_reason = "fallback"
+                # 防御性兜底：未知路由目标统一走 DIRECT，避免任何分支遗漏导致 500。
+                logger.warning(f"Unknown route_target={route_target.value}, fallback to DIRECT")
+                messages = prompt_builder.build_direct_prompt(request.message)
+                finish_reason = "direct"
 
             # Stream LLM response (use singleton)
             llm_client = get_llm_client()
@@ -360,13 +366,15 @@ class ChatService:
             yield {"type": "status", "data": "generating"}
 
             # —— 兜底话术(标准、固定、零编造) ——
-            # 当意图被路由到 FALLBACK, 或 RAG 检索为空(no_context)时, 不注入任何知识库
-            # 上下文, 也**不调用 LLM**, 直接以配置中的标准兜底话术作为回答。这样做:
+            # 仅当 RAG 检索为空(no_context, 即知识类意图但知识库无相关片段)时, 不注入任何
+            # 知识库上下文、也**不调用 LLM**, 直接以配置中的标准兜底话术作为回答。这样做:
             #   1) 话术固定一致, 不会每次生成不同文案;
             #   2) 彻底杜绝编造(没有任何上下文可供编造);
             #   3) 省去一次 LLM 调用, 降低延迟与成本。
+            # 注意: 闲聊/身份/越界意图已被路由到 DIRECT(由 LLM 直接对话式回答), 不会走到这里;
+            # 这是「知识库确实没有答案」与「用户没问知识库问题」两种场景的明确区分。
             # thinking 阶段仍照常展示(让前端保持"思考中->回答"的连贯观感)。
-            if finish_reason in ("fallback", "no_context"):
+            if finish_reason == "no_context":
                 full_response = settings.fallback_message
                 # finish_reason 保持为路由原因("fallback"/"no_context"), 便于前端/测试区分;
                 # 固定兜底话术仅作为响应内容, 不改变 finish_reason 语义。

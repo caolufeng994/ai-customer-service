@@ -43,10 +43,10 @@ class IntentRouter:
             "order_query": RouteTarget.RAG,
             "order_status": RouteTarget.RAG,
 
-            # Fallback intents
-            "chitchat": RouteTarget.FALLBACK,
-            "greeting": RouteTarget.FALLBACK,
-            "unknown": RouteTarget.FALLBACK,
+            # Fallback intents（闲聊/问候/未知 → 直接对话式回答，不检索）
+            "chitchat": RouteTarget.DIRECT,
+            "greeting": RouteTarget.DIRECT,
+            "unknown": RouteTarget.DIRECT,
         }
 
     def route(self, intent: str) -> RouteTarget:
@@ -59,7 +59,7 @@ class IntentRouter:
         Returns:
             RouteTarget for processing
         """
-        target = self._intent_map.get(intent, RouteTarget.FALLBACK)
+        target = self._intent_map.get(intent, RouteTarget.DIRECT)
         logger.debug(f"Routed intent '{intent}' to target '{target.value}'")
         return target
 

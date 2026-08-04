@@ -68,16 +68,16 @@ def test_router_knowledge_to_rag():
 
 
 def test_router_fallback_and_unknown():
-    assert route(IntentCategory.FALLBACK) == RouteTarget.FALLBACK
-    # 任何非知识类（含未来新增枚举）都应收敛到 FALLBACK，无遗漏分支。
-    # 通过"知识类之外必为 FALLBACK"不变量验证：
+    assert route(IntentCategory.FALLBACK) == RouteTarget.DIRECT
+    # 任何非知识类（含未来新增枚举）都应收敛到 DIRECT（直接对话式回答，不检索），无遗漏分支。
+    # 通过"知识类之外必为 DIRECT"不变量验证：
     all_intents = set(IntentCategory)
     for intent in all_intents:
         target = route(intent)
         if intent in KNOWLEDGE_INTENTS:
             assert target == RouteTarget.RAG
         else:
-            assert target == RouteTarget.FALLBACK
+            assert target == RouteTarget.DIRECT
 
 
 def test_router_is_pure_function():
@@ -119,7 +119,9 @@ def test_out_of_scope_skips_rag(client, monkeypatch):
     r = client.post("/api/chat/send", json={"message": "今天天气怎么样？"}, headers=h)
     assert r.status_code == 200
     data = r.json()["data"]
-    assert data["finish_reason"] == "fallback"
+    # 越界 query 走 DIRECT 直答链路(不检索), 由 LLM 直接生成回答(成功即 finish_reason="stop"),
+    # 不会返回知识库「检索为空」的固定兜底话术(那是 no_context 专属)。
+    assert data["finish_reason"] == "stop"
     assert spy.calls == 0, "越界 query 不应触发 RAG 检索"
     assert data["sources"] == []
 

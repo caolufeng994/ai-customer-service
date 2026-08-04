@@ -24,7 +24,8 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentUploadResponse(BaseModel):
-    """Document upload response schema"""
+    """Document upload response schema (one entry per uploaded file)"""
     document_id: int
+    file_name: Optional[str] = None
     status: str
     message: str

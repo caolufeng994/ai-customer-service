@@ -104,7 +104,7 @@ def test_kb_get_isolation_cross_user(client):
     h1, h2 = auth_headers(u1["token"]), auth_headers(u2["token"])
     doc_id = client.post(
         "/api/kb/documents", files={"file": ("doc.txt", b"hi", "text/plain")}, headers=h1
-    ).json()["data"]["document_id"]
+    ).json()["data"][0]["document_id"]
     # 用户2 不能读取用户1 的文档 -> 404
     r = client.get(f"/api/kb/documents/{doc_id}", headers=h2)
     assert r.status_code == 404
@@ -117,7 +117,7 @@ def test_kb_delete_isolation_cross_user(client):
     h1, h2 = auth_headers(u1["token"]), auth_headers(u2["token"])
     doc_id = client.post(
         "/api/kb/documents", files={"file": ("doc.txt", b"hi", "text/plain")}, headers=h1
-    ).json()["data"]["document_id"]
+    ).json()["data"][0]["document_id"]
     # 用户2 不能删除用户1 的文档 -> 404
     r = client.delete(f"/api/kb/documents/{doc_id}", headers=h2)
     assert r.status_code == 404
