@@ -51,7 +51,7 @@ class Embedder:
         embeddings = self.embed_batch([text])
         return embeddings[0] if embeddings else []
     
-    def embed_batch(self, texts: List[str], batch_size: int = 16) -> List[List[float]]:
+    def embed_batch(self, texts: List[str], batch_size: int = 10) -> List[List[float]]:
         """
         Embed multiple texts in batches
         
@@ -68,6 +68,10 @@ class Embedder:
         all_embeddings = []
         
         if self.provider == "dashscope":
+            # DashScope 接口硬限制: 单次批量 embedding 最多 10 条(text-embedding-v3)。
+            # 超出会返回 400 InvalidParameter "batch size is invalid"。这里无论调用方传入
+            # 多大的 batch_size 都强制收敛到上限, 防止再次出现 FAQ 整篇上传失败。
+            batch_size = min(batch_size, 10)
             # Cloud embedding with DashScope
             for i in range(0, len(texts), batch_size):
                 batch = texts[i:i + batch_size]

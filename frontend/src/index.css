@@ -315,9 +315,13 @@ body {
   font-size: 12px;
   color: #666;
   flex: 1;
+  /* 多行展示被引用的源片段, 避免单行省略号截断导致"来源不精确" */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .source-name {
@@ -327,19 +331,13 @@ body {
   margin-right: 4px;
 }
 
-/* 答案中的 [K编号] 引用: 可点击、高亮, 点击平滑跳转到来源卡片 */
+/* 答案中的 [K编号] 引用: 仅作为引用标记高亮展示, 不可点击跳转 */
 .k-ref {
   color: #1677ff;
   background: #e6f4ff;
   border-radius: 4px;
   padding: 0 4px;
-  cursor: pointer;
   font-weight: 600;
-  transition: background 0.15s;
-}
-.k-ref:hover {
-  background: #bae0ff;
-  text-decoration: underline;
 }
 
 /* 防编造自检未通过时的告警条 */

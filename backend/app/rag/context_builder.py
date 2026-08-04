@@ -214,7 +214,9 @@ class ContextBuilder:
                 "chunk_id": result.chunk_id,
                 "chunk_index": result.chunk_index,
                 "score": float(result.score),
-                "snippet": result.content[:200],      # 来源片段(块首 200 字)
+                # 来源片段展示被引用的完整块内容(不再截断), 让引用精确对应需求内容;
+                # 前端以多行收起(最多 4 行)呈现, 悬停 tooltip 显示全文。
+                "snippet": result.content,
             })
 
         return context, sources

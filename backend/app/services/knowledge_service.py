@@ -93,7 +93,7 @@ class KnowledgeService:
             
             # Step 3: Embed chunks
             embedder = Embedder()
-            embeddings = embedder.embed_batch(chunks, batch_size=16)
+            embeddings = embedder.embed_batch(chunks, batch_size=10)
             
             # Step 4: Store in vector database
             vector_store = VectorStore()

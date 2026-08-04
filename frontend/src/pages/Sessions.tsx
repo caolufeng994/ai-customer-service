@@ -5,10 +5,19 @@ import request, { postStream } from '../utils/request'
 
 const { Header, Content, Sider } = Layout
 
-// 答案中的 [K编号] 引用在召回来源中一一对应: [K3] -> sources[k_index=3]。
-// 这里把 [K编号] 渲染成可点击的高亮标记, 点击后平滑滚动到对应的来源卡片,
-// 实现"引用 -> 来源"的双向绑定, 让用户一眼看清每段结论的出处。
+// 答案中的 [K编号] 与下方"引用来源"列表一一对应: [K3] -> sources[k_index=3]。
+// [K编号] 仅作为引用标记展示(不可点击跳转), 真正的来源内容见下方来源列表。
 const K_REF_RE = /\[K(\d+)\]/g
+
+// 从回答文本解析被引用的 [K编号], 用于只展示真正被引用的来源, 避免罗列全部召回块。
+function citedKIndices(content: string): Set<number> {
+  const set = new Set<number>()
+  if (!content) return set
+  const re = /\[K(\d+)\]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(content)) !== null) set.add(Number(m[1]))
+  return set
+}
 
 function renderAnswer(content: string): ReactNode {
   if (!content) return null
@@ -19,16 +28,9 @@ function renderAnswer(content: string): ReactNode {
   while ((m = K_REF_RE.exec(content)) !== null) {
     if (m.index > last) parts.push(content.slice(last, m.index))
     const idx = Number(m[1])
+    // 纯展示高亮, 不绑定跳转行为
     parts.push(
-      <span
-        key={`k-${m.index}`}
-        className="k-ref"
-        title="查看引用来源"
-        onClick={() => {
-          const el = document.getElementById(`source-card-${idx}`)
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }}
-      >
+      <span key={`k-${m.index}`} className="k-ref">
         [K{idx}]
       </span>
     )
@@ -126,6 +128,20 @@ export default function Sessions() {
     }
   }
 
+  // 首次对话用用户首条消息的前 20 字(去空白)作为会话标题, 取代默认的"新对话"。
+  const titleSession = async (sessionId: number, text: string) => {
+    const trimmed = text.replace(/\s+/g, ' ').trim()
+    const title = trimmed.length > 20 ? `${trimmed.slice(0, 20)}…` : trimmed || '新对话'
+    try {
+      await request.put(`/sessions/${sessionId}`, { title })
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, title } : s))
+      )
+    } catch (error) {
+      // 标题更新失败不影响对话主流程
+    }
+  }
+
   const handleFeedback = (messageId: number, type: 'like' | 'dislike') => {
     setSelectedMessageId(messageId)
     setFeedbackType(type)
@@ -152,6 +168,11 @@ export default function Sessions() {
   const sendMessage = async (presetText?: string) => {
     const userMessage = presetText ?? input
     if (!userMessage.trim() || !currentSession) return
+    // 若该会话仍是默认标题"新对话", 用首条消息自动生成标题(后续消息不再覆盖)
+    const cur = sessions.find((s) => s.id === currentSession)
+    if (cur && cur.title === '新对话') {
+      titleSession(currentSession, userMessage)
+    }
     setInput('')
     setMessages([...messages, { id: Date.now(), role: 'user', content: userMessage, created_at: new Date().toISOString() }])
     setLoading(true)
@@ -309,23 +330,28 @@ export default function Sessions() {
                       <div className="gw-hint">已自动剔除/修正无法被知识库支撑的陈述，仍建议谨慎采信。</div>
                     </div>
                   )}
-                  {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
-                    <div className="message-sources">
-                      <div className="sources-title">引用来源 (点击回答中的 [K编号] 可跳转):</div>
-                      {msg.sources.map((source, index) => (
-                        <div
-                          key={index}
-                          id={`source-card-${source.k_index ?? index + 1}`}
-                          className="source-item"
-                        >
-                          <Tag color="blue">{source.k_index != null ? `[K${source.k_index}]` : `来源${index + 1}`}</Tag>
-                          <Tag color="geekblue">{(source.score * 100).toFixed(0)}%</Tag>
-                          <span className="source-name">{source.doc_name || `doc ${source.doc_id}`}</span>
-                          <span className="source-snippet" title={source.snippet || ''}>{source.snippet}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (() => {
+                    // 只展示回答中真正被 [K编号] 引用的来源, 让引用精确对应需求内容;
+                    // 若回答里没有任何 [K编号](异常/纯直答), 退回展示全部来源以免信息丢失。
+                    const cited = citedKIndices(msg.content)
+                    const shown = cited.size > 0
+                      ? msg.sources.filter((s) => s.k_index != null && cited.has(s.k_index))
+                      : msg.sources
+                    if (shown.length === 0) return null
+                    return (
+                      <div className="message-sources">
+                        <div className="sources-title">引用来源：</div>
+                        {shown.map((source, index) => (
+                          <div key={index} className="source-item">
+                            <Tag color="blue">{source.k_index != null ? `[K${source.k_index}]` : `来源${index + 1}`}</Tag>
+                            <Tag color="geekblue">{(source.score * 100).toFixed(0)}%</Tag>
+                            <span className="source-name">{source.doc_name || `doc ${source.doc_id}`}</span>
+                            <span className="source-snippet" title={source.snippet || ''}>{source.snippet}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
                   {msg.role === 'assistant' && (
                     <div className="message-feedback">
                       <Button

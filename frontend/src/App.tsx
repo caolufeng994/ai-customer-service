@@ -1,5 +1,6 @@
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { ConfigProvider, theme, Layout, Menu } from 'antd'
+import { ConfigProvider, theme, Layout, Menu, Dropdown, Avatar, Space } from 'antd'
+import { UserOutlined, LogoutOutlined } from '@ant-design/icons'
 import Login from './pages/Login'
 import Sessions from './pages/Sessions'
 import KnowledgeBase from './pages/KnowledgeBase'
@@ -10,10 +11,17 @@ const { Header, Content } = Layout
 
 // 读取本地存储的当前用户角色, 决定菜单项与可访问路由。
 // 普通用户(role != 'admin')只能看到"会话"页; 管理员还能看到"知识库"与"管理后台"。
-function readCurrentUser(): { role?: string } | null {
+interface CurrentUser {
+  id?: number
+  role?: string
+  email?: string
+  phone?: string
+}
+
+function readCurrentUser(): CurrentUser | null {
   try {
     const raw = localStorage.getItem('user')
-    return raw ? JSON.parse(raw) : null
+    return raw ? (JSON.parse(raw) as CurrentUser) : null
   } catch {
     return null
   }
@@ -25,6 +33,41 @@ function isAdmin(): boolean {
 
 function isAuthed(): boolean {
   return !!localStorage.getItem('token')
+}
+
+// 右上角用户中心: 显示当前登录账号(邮箱>手机号>用户), 点击下拉可退出登录。
+// 后端为无状态 JWT, 退出只需清空本地 token/user 并跳回登录页即可。
+function getUserDisplay(): string {
+  const u = readCurrentUser()
+  if (!u) return ''
+  return u.email || u.phone || '用户'
+}
+
+function UserCenter() {
+  const navigate = useNavigate()
+  const u = readCurrentUser()
+  if (!u) return null
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    navigate('/login')
+  }
+
+  const menuItems = [{ key: 'logout', icon: <LogoutOutlined />, label: '退出登录' }]
+
+  return (
+    <Dropdown
+      menu={{ items: menuItems, onClick: ({ key }) => key === 'logout' && handleLogout() }}
+      placement="bottomRight"
+      trigger={['click']}
+    >
+      <Space style={{ cursor: 'pointer', color: '#334155', paddingInline: 8 }}>
+        <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: '#5b8cff' }} />
+        <span>{getUserDisplay()}</span>
+      </Space>
+    </Dropdown>
+  )
 }
 
 // 路由守卫: 仅管理员可进入知识库管理 / 管理后台。
@@ -97,6 +140,7 @@ function App() {
             onClick={({ key }) => navigate(key)}
             items={menuItems}
           />
+          <UserCenter />
         </Header>
         <Content>
           <Routes>
