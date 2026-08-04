@@ -1,11 +1,12 @@
 """
 Authentication API endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, UserResponse
+from app.schemas.auth import RegisterRequest, LoginRequest, UserResponse
 from app.services.auth_service import AuthService
+from app.utils.auth import get_token_expires_in
 from app.core.response import ApiResponse
 from app.core.exceptions import BaseAppException
 
@@ -34,7 +35,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
             data={
                 "token": token,
                 "token_type": "bearer",
-                "expires_in": 86400,  # 24 hours in seconds
+                "expires_in": get_token_expires_in(),  # derived from jwt_expire_hours
                 "user": UserResponse.model_validate(user).model_dump()
             },
             message="Login successful"

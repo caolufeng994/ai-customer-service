@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.user import User
 from app.schemas.auth import RegisterRequest, LoginRequest
-from app.utils.auth import generate_salt, hash_password, verify_password, create_access_token, get_token_expires_in
+from app.utils.auth import generate_salt, hash_password, verify_password, create_access_token
 from app.core.exceptions import ValidationError, AuthenticationError, NotFoundError
 
 

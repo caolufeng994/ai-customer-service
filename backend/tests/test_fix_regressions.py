@@ -12,8 +12,6 @@
 import asyncio
 import json
 
-import pytest
-
 from tests.helpers import register_and_login, auth_headers, make_session, make_message
 import app.services.chat_service as cs
 from app.core.exceptions import QuotaExceededError

@@ -9,7 +9,6 @@ from pathlib import Path
 from app.models.kb_document import KbDocument
 from app.models.kb_chunk import KbChunk
 from app.config import settings
-from app.schemas.knowledge import DocumentResponse
 from app.rag.loader import DocumentLoader
 from app.rag.splitter import TextSplitter
 from app.rag.embedder import Embedder

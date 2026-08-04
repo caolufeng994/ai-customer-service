@@ -3,7 +3,6 @@ Session API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
 from app.database import get_db
 from app.schemas.session import SessionCreate, SessionUpdate, SessionResponse, SessionDetailResponse, MessageResponse
 from app.services.session_service import SessionService

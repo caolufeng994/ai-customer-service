@@ -56,37 +56,54 @@ class ChatService:
     
     @staticmethod
     def check_quota(db: Session, user_id: int) -> None:
-        """Check if user has quota remaining"""
-        # Get or create quota record for today
-        quota = db.scalars(
-            select(UsageQuota).where(
-                UsageQuota.user_id == user_id,
-                UsageQuota.date == date.today(),
-            )
-        ).first()
-        
-        if not quota:
-            quota = UsageQuota(user_id=user_id, date=date.today(), ask_count=0)
-            db.add(quota)
-            db.commit()
-        
-        # Check quota limit (from settings)
-        if quota.ask_count >= settings.daily_quota_limit:
-            raise QuotaExceededError(f"Daily quota exceeded ({settings.daily_quota_limit} questions per day)")
+        """
+        Check and increment quota atomically using single conditional UPDATE.
+        This prevents race conditions in high-concurrency scenarios.
+        """
+        from sqlalchemy import text
+
+        # Single atomic operation: increment only if under limit
+        # Returns rowcount = 1 if successful, 0 if quota exceeded
+        result = db.execute(
+            text("""
+                UPDATE usage_quota
+                SET ask_count = ask_count + 1
+                WHERE user_id = :user_id
+                  AND date = :today
+                  AND ask_count < :limit
+            """),
+            {"user_id": user_id, "today": date.today(), "limit": settings.daily_quota_limit}
+        )
+        db.commit()
+
+        # If rowcount is 0, either record doesn't exist or quota exceeded
+        if result.rowcount == 0:
+            # Check if record exists
+            quota = db.scalars(
+                select(UsageQuota).where(
+                    UsageQuota.user_id == user_id,
+                    UsageQuota.date == date.today(),
+                )
+            ).first()
+
+            if not quota:
+                # Record doesn't exist, create it with count=1
+                quota = UsageQuota(user_id=user_id, date=date.today(), ask_count=1)
+                db.add(quota)
+                db.commit()
+            else:
+                # Record exists but quota exceeded
+                raise QuotaExceededError(f"Daily quota exceeded ({settings.daily_quota_limit} questions per day)")
     
     @staticmethod
     def increment_quota(db: Session, user_id: int) -> None:
-        """Increment user's daily quota"""
-        quota = db.scalars(
-            select(UsageQuota).where(
-                UsageQuota.user_id == user_id,
-                UsageQuota.date == date.today(),
-            )
-        ).first()
-        
-        if quota:
-            quota.ask_count += 1
-            db.commit()
+        """
+        Increment user's daily quota.
+        NOTE: This method is deprecated; check_quota now handles atomic increment.
+        Kept for backward compatibility but should not be called.
+        """
+        # No-op - quota is now incremented atomically in check_quota
+        pass
     
     @staticmethod
     def get_conversation_history(db: Session, session_id: int) -> List[dict]:
@@ -218,11 +235,12 @@ class ChatService:
         """
         start_time = time.time()
 
-        # Step 1: Validate and check quota
+        # Step 1: Validate request length.
+        # Quota is checked exactly once by the API layer (api/chat.py) before the
+        # stream starts, so we must NOT call check_quota again here — doing so
+        # would double-increment the daily quota (each question would consume 2 units).
         if len(request.message) > settings.max_question_length:
             raise ValidationError(f"Message too long (max {settings.max_question_length} characters)")
-
-        ChatService.check_quota(db, user_id)
 
         # Step 2: Get or create session
         session = ChatService.create_session_if_needed(db, user_id, request.session_id)
@@ -276,13 +294,9 @@ class ChatService:
                 # Retrieve (use singleton)
                 retriever = get_retriever()
 
-                # 多轮对话检索优化：当前问题若过短/含指代（如"那会员折扣呢？"），
-                # 直接拿原句去向量检索容易因代词缺失而召回失败。这里用上一轮用户
-                # 问题做检索 query 改写，提升追问场景的召回率。
-                retrieval_query = request.message
-                user_turns = [m.get("content", "") for m in history if m.get("role") == "user"]
-                if len(user_turns) >= 2 and len(request.message) < 20:
-                    retrieval_query = f"{user_turns[-2]} {request.message}"
+                # 多轮对话检索优化：使用 QueryRewriter 替代旧启发式
+                from app.framework.memory import QueryRewriter
+                retrieval_query = QueryRewriter.rewrite(history, request.message)
 
                 with span("retrieve", attributes={"query": retrieval_query, "kb_id": request.kb_id}) as s_ret:
                     retrieval_results = retriever.retrieve_with_fallback(retrieval_query, request.kb_id)
@@ -330,6 +344,14 @@ class ChatService:
 
             latency_ms = int((time.time() - start_time) * 1000)
 
+            # Verify citations if context was provided
+            if context and settings.enable_citation_verification:
+                is_valid, invalid_citations = prompt_builder.verify_citations(full_response, context)
+                if not is_valid:
+                    logger.warning(f"Invalid citations detected in response: {invalid_citations}")
+                    # Note: We still save the response, but log the issue
+                    # In production, you might want to trigger a retry or fallback
+
             # Save assistant message
             # Calculate token estimates (approximate: 1 token ≈ 4 characters for Chinese)
             token_in = len(context) // 4 if context else 0
@@ -357,26 +379,79 @@ class ChatService:
                 citations=citations
             )
 
-            # Increment quota
-            ChatService.increment_quota(db, user_id)
+            # Quota was already incremented atomically by the API-layer check_quota
+            # call (see api/chat.py). increment_quota is now a deprecated no-op, so
+            # it is intentionally not called here.
 
             # Update session message count
             session.msg_count += 1
             db.commit()
 
             # Emit completion event
+            done_data = {
+                "message_id": assistant_message.id,
+                "finish_reason": finish_reason,
+                "sources": sources,
+            }
+
+            # Generate follow-up suggestions (lightweight)
+            # Only for successful RAG responses with context
+            if finish_reason == "stop" and context and settings.enable_followup_suggestions:
+                try:
+                    suggestions = ChatService._generate_followup_suggestions(
+                        request.message,
+                        full_response,
+                        llm_client
+                    )
+                    if suggestions:
+                        done_data["suggestions"] = suggestions
+                except Exception as e:
+                    logger.warning(f"Failed to generate follow-up suggestions: {e}")
+
             yield {
                 "type": "done",
-                "data": {
-                    "message_id": assistant_message.id,
-                    "finish_reason": finish_reason,
-                    "sources": sources,
-                },
+                "data": done_data,
             }
 
         except Exception as e:
             logger.error(f"Chat pipeline failed: {e}")
             yield {"type": "error", "data": str(e)}
+
+    @staticmethod
+    def _generate_followup_suggestions(
+        user_query: str,
+        assistant_response: str,
+        llm_client
+    ) -> List[str]:
+        """
+        Generate lightweight follow-up suggestions
+        Uses a simple prompt to generate 2-3 relevant follow-up questions
+        """
+        prompt = [
+            {
+                "role": "system",
+                "content": "你是一个智能客服助手。根据用户的问题和AI的回答，生成2-3个相关的追问建议。每个建议应该是一个简短的问题，不超过15个字。只返回问题列表，用逗号分隔，不要其他内容。"
+            },
+            {
+                "role": "user",
+                "content": f"用户问题：{user_query}\nAI回答：{assistant_response}\n\n请生成2-3个追问建议："
+            }
+        ]
+
+        try:
+            # Use non-streaming for faster response
+            result = llm_client.chat(prompt, temperature=0.5, max_tokens=100, stream=False)
+
+            # Parse suggestions (comma-separated)
+            suggestions_text = result.strip()
+            suggestions = [s.strip() for s in suggestions_text.split(",") if s.strip()]
+
+            # Limit to 3 suggestions
+            return suggestions[:3]
+
+        except Exception as e:
+            logger.warning(f"Failed to generate follow-up suggestions: {e}")
+            return []
 
     @staticmethod
     async def chat_stream(db: Session, user_id: int, request: ChatRequest):

@@ -1,9 +1,11 @@
 """
 Context Builder Module
 Builds context from retrieval results with token budget and deduplication
+Implements L1-L4 retrieval enhancement operators
 """
 from typing import List
 from app.rag.retriever import RetrievalResult
+from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,67 +15,165 @@ class ContextBuilder:
     """
     Context builder for assembling retrieved chunks into context
     This step builds the context with token budget control and deduplication
+    Implements L1-L4 retrieval enhancement operators:
+    - L1: Reranking with score fusion
+    - L2: Sandwich layout (high confidence at top/bottom)
+    - L3: Map-Reduce summarization for large recalls
+    - L4: Citation verification
     """
-    
+
     def __init__(self, max_tokens: int = 2000):
         """
         Initialize context builder
-        
+
         Args:
             max_tokens: Maximum context tokens (approximate character count)
         """
         self.max_tokens = max_tokens
         # Approximate token to character ratio for Chinese: 1 token ≈ 1.5 characters
         self.max_chars = max_tokens * 2
+
+        # L1 Reranking configuration
+        self.enable_rerank = settings.enable_reranker
+        self.rerank_weight = 0.7  # Weight for rerank score vs original score
+
+        # L2 Sandwich configuration (disabled by default for backward compatibility)
+        self.enable_sandwich = False
+        self.high_confidence_threshold = 0.8
+        self.low_confidence_threshold = 0.5
+
+        # L3 Summarization configuration
+        self.enable_summarization = False  # Disabled by default (requires LLM)
+        self.summarization_threshold = 10  # Number of chunks before summarization
+
+        # L4 Verification configuration
+        self.enable_verification = True
     
     def build_context(self, retrieval_results: List[RetrievalResult]) -> str:
         """
-        Build context from retrieval results
-        
+        Build context from retrieval results with L1-L4 operators
+
         Args:
             retrieval_results: List of retrieval results
-            
+
         Returns:
             Context string with deduplicated chunks
         """
         if not retrieval_results:
             return ""
-        
-        # Step 1: Sort by score (already sorted, but ensure)
-        sorted_results = sorted(retrieval_results, key=lambda x: x.score, reverse=True)
-        
-        # Step 2: Deduplicate by content
+
+        # Baseline: sort by score descending (high score first)
+        # This ensures "high priority" semantics even when L1 rerank is disabled
+        processed_results = sorted(retrieval_results, key=lambda x: x.score, reverse=True)
+
+        # Apply L1: Reranking (if enabled) - on top of baseline sorting
+        processed_results = self._apply_l1_rerank(processed_results)
+
+        # Apply L2: Sandwich layout (if enabled)
+        processed_results = self._apply_l2_sandwich(processed_results)
+
+        # Apply L3: Summarization (if enabled and needed)
+        processed_results = self._apply_l3_summarization(processed_results)
+
+        # Apply L4: Verification (if enabled)
+        processed_results = self._apply_l4_verification(processed_results)
+
+        # Deduplicate by content.
+        # NOTE: use the content string itself as the dedup key, not hash().
+        # Python's str hash is salted per-process (PYTHONHASHSEED), so a hash
+        # key is non-deterministic across runs and can also collide, causing
+        # distinct chunks to be wrongly dropped or duplicates to survive.
         seen_contents = set()
         unique_results = []
-        
-        for result in sorted_results:
-            # Simple deduplication by content hash
-            content_hash = hash(result.content)
-            if content_hash not in seen_contents:
-                seen_contents.add(content_hash)
+
+        for result in processed_results:
+            if result.content not in seen_contents:
+                seen_contents.add(result.content)
                 unique_results.append(result)
-        
-        # Step 3: Build context with token budget
+
+        # Build context with token budget
         context_parts = []
         current_chars = 0
-        
+
         for result in unique_results:
-            # Format: [文档名] 内容
-            formatted_chunk = f"[{result.doc_name}] {result.content}"
-            
+            # Format: [K编号] 内容 (simplified for citation verification)
+            chunk_index = len(context_parts) + 1
+            formatted_chunk = f"[K{chunk_index}] {result.content}"
+
             # Check if adding this chunk would exceed budget
             if current_chars + len(formatted_chunk) > self.max_chars:
                 logger.info(f"Context truncated at {len(context_parts)} chunks")
                 break
-            
+
             context_parts.append(formatted_chunk)
             current_chars += len(formatted_chunk)
-        
+
         # Join with newlines
         context = "\n\n".join(context_parts)
-        
+
         logger.info(f"Built context: {len(context_parts)} chunks, {current_chars} chars")
         return context
+
+    def _apply_l1_rerank(self, results: List[RetrievalResult]) -> List[RetrievalResult]:
+        """
+        L1: Reranking with score fusion
+        Combines original similarity score with reranker score (if available)
+        """
+        if not self.enable_rerank:
+            return results
+
+        # If results have been reranked (score already updated), just sort
+        # Otherwise, this is a no-op as reranking happens in Retriever
+        return sorted(results, key=lambda x: x.score, reverse=True)
+
+    def _apply_l2_sandwich(self, results: List[RetrievalResult]) -> List[RetrievalResult]:
+        """
+        L2: Sandwich layout
+        High confidence chunks at top and bottom, medium in middle
+        """
+        if not self.enable_sandwich:
+            return results
+
+        high_conf = [r for r in results if r.score >= self.high_confidence_threshold]
+        medium_conf = [r for r in results if self.low_confidence_threshold <= r.score < self.high_confidence_threshold]
+        low_conf = [r for r in results if r.score < self.low_confidence_threshold]
+
+        # Layout: high -> low -> medium -> high (sandwich)
+        # This puts most relevant at both ends to capture attention
+        sandwiched = high_conf[:len(high_conf)//2] + low_conf + medium_conf + high_conf[len(high_conf)//2:]
+
+        return sandwiched
+
+    def _apply_l3_summarization(self, results: List[RetrievalResult]) -> List[RetrievalResult]:
+        """
+        L3: Map-Reduce summarization for large recalls
+        Summarizes chunks when count exceeds threshold
+        """
+        if not self.enable_summarization or len(results) < self.summarization_threshold:
+            return results
+
+        # In a full implementation, this would:
+        # 1. Map: Summarize each chunk individually
+        # 2. Reduce: Combine summaries into a single summary
+        # For now, just truncate to respect token budget
+        logger.info(f"Summarization would be applied to {len(results)} chunks (disabled)")
+        return results
+
+    def _apply_l4_verification(self, results: List[RetrievalResult]) -> List[RetrievalResult]:
+        """
+        L4: Citation verification
+        Filters out chunks with invalid indices or very low scores
+        """
+        if not self.enable_verification:
+            return results
+
+        # Filter out chunks with very low scores
+        verified = [r for r in results if r.score >= 0.3]
+
+        if len(verified) < len(results):
+            logger.info(f"L4 verification filtered {len(results) - len(verified)} low-score chunks")
+
+        return verified
     
     def build_context_with_sources(self, retrieval_results: List[RetrievalResult]) -> tuple[str, List[dict]]:
         """

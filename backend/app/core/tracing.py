@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from fastapi import Request, Depends
+from fastapi import Request
 
 # --- request-scoped context ---
 _trace_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(

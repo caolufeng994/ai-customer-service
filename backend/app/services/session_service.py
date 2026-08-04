@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.models.session import Session as SessionModel
 from app.models.message import Message
-from app.models.message_citation import MessageCitation
 from app.schemas.session import SessionCreate
 from app.core.exceptions import NotFoundError
 

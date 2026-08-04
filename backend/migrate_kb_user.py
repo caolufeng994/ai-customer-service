@@ -1,4 +1,4 @@
-import re, pymysql
+import pymysql
 cfg = {}
 for line in open(".env", encoding="utf-8"):
     line = line.strip()

@@ -8,7 +8,6 @@ These exercise the *complete* tracing path without needing an external collector
 """
 from __future__ import annotations
 
-import pytest
 from app.core.trace_store import trace_store
 from app.core.tracing import span, get_current_trace_id, set_current_trace_id, reset_current_trace_id
 

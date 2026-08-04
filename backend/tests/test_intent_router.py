@@ -107,7 +107,6 @@ class _FakeLLMClient:
 def test_out_of_scope_skips_rag(client, monkeypatch):
     from tests.helpers import register_and_login, auth_headers
     import app.services.chat_service as cs
-    from app.core.exceptions import QuotaExceededError
 
     creds = register_and_login(client, email="router@example.com")
     h = auth_headers(creds["token"])

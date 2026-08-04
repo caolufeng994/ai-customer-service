@@ -3,8 +3,9 @@ Application Configuration Module
 Loads settings from environment variables and .env file
 """
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
+from pydantic import Field
 from typing import List, Optional
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -53,10 +54,16 @@ class Settings(BaseSettings):
     local_embedding_model: str = "bge-small-zh-v1.5"
     
     # Vector Database
-    chroma_persist_dir: str = "D:/data/chroma"
-    
+    chroma_persist_dir: str = Field(
+        default_factory=lambda: str(Path.cwd() / "data" / "chroma"),
+        description="Chroma vector database persistence directory"
+    )
+
     # File storage (uploads)
-    upload_dir: str = "D:/data/uploads"
+    upload_dir: str = Field(
+        default_factory=lambda: str(Path.cwd() / "data" / "uploads"),
+        description="File upload storage directory"
+    )
 
     # Knowledge base initialization
     # 设为 true 时，服务启动会自动把 seed_docs 向量化（幂等，已入库的会跳过），
@@ -103,6 +110,12 @@ class Settings(BaseSettings):
     enable_reranker: bool = False  # Enable reranking for better retrieval
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # Reranker model
     retrieval_recall_k: int = 20  # Recall top-k before reranking
+
+    # Follow-up Suggestions
+    enable_followup_suggestions: bool = False  # Enable follow-up question suggestions
+
+    # Citation Verification
+    enable_citation_verification: bool = True  # Enable citation verification to prevent hallucinations
     
     class Config:
         env_file = ".env"

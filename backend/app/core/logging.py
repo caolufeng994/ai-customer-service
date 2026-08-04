@@ -14,7 +14,6 @@ import logging
 from typing import Dict, Any
 
 from app.config import settings
-from app.core.tracing import TraceIdFilter
 
 
 class TraceFormatter(logging.Formatter):

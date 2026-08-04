@@ -4,8 +4,6 @@ POST /api/chat/stream
 需鉴权;含消息长度校验、配额校验、流式响应结构校验。
 注:LLM 流式生成已在用例内 mock,避免触发真实 DashScope 调用。
 """
-import pytest
-
 from tests.helpers import register_and_login, auth_headers
 import app.services.chat_service as cs
 from app.core.exceptions import QuotaExceededError

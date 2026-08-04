@@ -8,7 +8,6 @@ import os
 
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from contextlib import asynccontextmanager

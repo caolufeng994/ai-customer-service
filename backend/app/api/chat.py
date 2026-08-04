@@ -4,7 +4,7 @@ Chat API endpoints with SSE streaming and non-streaming send
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import List
 from app.database import get_db
 from app.schemas.chat import ChatRequest, ChatSendResponse
 from app.schemas.session import MessageResponse
