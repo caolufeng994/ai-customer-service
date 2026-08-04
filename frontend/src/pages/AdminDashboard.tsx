@@ -1,5 +1,20 @@
 import { useState, useEffect } from 'react'
-import { Card, Statistic, Table, Spin, message } from 'antd'
+import {
+  Card,
+  Statistic,
+  Table,
+  Spin,
+  message,
+  Tabs,
+  Select,
+  Input,
+  DatePicker,
+  Space,
+  Tag,
+  Button,
+  Empty,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import request from '../utils/request'
 
 interface Overview {
@@ -22,6 +37,23 @@ interface SessionRow {
   msg_count: number
   updated_at: string | null
 }
+
+interface FeedbackRow {
+  id: number
+  message_id: number
+  user_id: number
+  rating: number
+  comment: string | null
+  reason: string | null
+  created_at: string
+  session_id: number | null
+  session_title: string | null
+  user_account: string | null
+  message_content: string | null
+  message_role: string | null
+}
+
+const REASON_OPTIONS = ['答非所问', '事实错误', '没召回', '太啰嗦', '其他']
 
 /**
  * 纯 SVG 折线图：根据日均问答量数据绘制，不引入额外图表依赖。
@@ -70,6 +102,17 @@ export default function AdminDashboard() {
   const [daily, setDaily] = useState<DailyPoint[]>([])
   const [sessions, setSessions] = useState<SessionRow[]>([])
 
+  // ---- 用户反馈模块状态 ----
+  const [feedback, setFeedback] = useState<FeedbackRow[]>([])
+  const [fbLoading, setFbLoading] = useState(false)
+  const [fbTotal, setFbTotal] = useState(0)
+  const [fbPage, setFbPage] = useState(1)
+  const [fbPageSize, setFbPageSize] = useState(10)
+  const [fRating, setFRating] = useState<number | undefined>(undefined)
+  const [fReason, setFReason] = useState<string | undefined>(undefined)
+  const [fKeyword, setFKeyword] = useState('')
+  const [fRange, setFRange] = useState<any>(null)
+
   useEffect(() => {
     ;(async () => {
       try {
@@ -89,7 +132,45 @@ export default function AdminDashboard() {
     })()
   }, [])
 
-  const columns = [
+  const fetchFeedback = async (page = fbPage, pageSize = fbPageSize, keywordOverride?: string) => {
+    setFbLoading(true)
+    try {
+      const params: Record<string, unknown> = {
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
+      }
+      if (fRating !== undefined) params.rating = fRating
+      if (fReason) params.reason = fReason
+      const kw = keywordOverride !== undefined ? keywordOverride : fKeyword
+      if (kw.trim()) params.keyword = kw.trim()
+      if (fRange && fRange[0] && fRange[1]) {
+        params.start_date = fRange[0].format('YYYY-MM-DD')
+        params.end_date = fRange[1].format('YYYY-MM-DD')
+      }
+      const res: any = await request.get('/admin/feedbacks', { params })
+      setFeedback(res.data || [])
+      setFbTotal(res.meta?.total ?? 0)
+    } catch {
+      message.error('加载反馈数据失败')
+    } finally {
+      setFbLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchFeedback(1, fbPageSize)
+    // 仅在挂载时拉取首屏反馈数据；筛选/翻页由各自处理函数触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const resetFilters = () => {
+    setFRating(undefined)
+    setFReason(undefined)
+    setFKeyword('')
+    setFRange(null)
+  }
+
+  const sessionColumns = [
     { title: '会话ID', dataIndex: 'id', key: 'id', width: 90 },
     { title: '标题', dataIndex: 'title', key: 'title' },
     { title: '用户ID', dataIndex: 'user_id', key: 'user_id', width: 90 },
@@ -103,42 +184,196 @@ export default function AdminDashboard() {
     },
   ]
 
+  const feedbackColumns: ColumnsType<FeedbackRow> = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 64 },
+    {
+      title: '用户',
+      key: 'user',
+      width: 150,
+      render: (_, r) => (
+        <div>
+          <div>{r.user_account || '-'}</div>
+          <div style={{ color: '#999', fontSize: 12 }}>UID {r.user_id}</div>
+        </div>
+      ),
+    },
+    {
+      title: '类型',
+      dataIndex: 'rating',
+      key: 'rating',
+      width: 90,
+      render: (v: number) =>
+        v === 1 ? <Tag color="green">点赞</Tag> : <Tag color="red">点踩</Tag>,
+    },
+    {
+      title: '原因',
+      dataIndex: 'reason',
+      key: 'reason',
+      width: 110,
+      render: (v: string | null) =>
+        v ? <Tag color="orange">{v}</Tag> : <span style={{ color: '#bbb' }}>-</span>,
+    },
+    {
+      title: '反馈内容',
+      dataIndex: 'comment',
+      key: 'comment',
+      ellipsis: true,
+      render: (v: string | null) =>
+        v || <span style={{ color: '#bbb' }}>(无文字反馈)</span>,
+    },
+    {
+      title: '关联消息',
+      key: 'msg',
+      ellipsis: true,
+      render: (_, r) => (
+        <div>
+          <div style={{ color: '#666', fontSize: 12 }}>{r.session_title || '会话'}</div>
+          <div className="fb-msg-snippet">{r.message_content || '-'}</div>
+        </div>
+      ),
+    },
+    {
+      title: '提交时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 170,
+      render: (v: string) => (v ? new Date(v).toLocaleString() : '-'),
+    },
+  ]
+
+  const overviewPane = (
+    <Spin spinning={loading}>
+      <div className="stat-cards">
+        <Card>
+          <Statistic title="总会话数" value={overview?.total_sessions ?? 0} />
+        </Card>
+        <Card>
+          <Statistic title="总消息数" value={overview?.total_messages ?? 0} />
+        </Card>
+        <Card>
+          <Statistic title="总反馈数" value={overview?.total_feedbacks ?? 0} />
+        </Card>
+        <Card>
+          <Statistic
+            title="点赞 / 点踩"
+            value={`${overview?.like_count ?? 0} / ${overview?.dislike_count ?? 0}`}
+          />
+        </Card>
+      </div>
+
+      <Card title="日均问答量（近 14 天）" className="chart-card">
+        {daily.length > 0 ? <LineChart data={daily} /> : <div className="empty-hint">暂无数据</div>}
+      </Card>
+
+      <Card title="全量会话记录" className="table-card">
+        <Table
+          rowKey="id"
+          columns={sessionColumns}
+          dataSource={sessions}
+          pagination={{ pageSize: 10 }}
+          size="middle"
+        />
+      </Card>
+    </Spin>
+  )
+
+  const feedbackPane = (
+    <div>
+      <Space wrap style={{ marginBottom: 16 }}>
+        <Select
+          placeholder="全部类型"
+          style={{ width: 130 }}
+          allowClear
+          value={fRating}
+          onChange={(v) => setFRating(v)}
+          options={[
+            { value: 1, label: '点赞' },
+            { value: -1, label: '点踩' },
+          ]}
+        />
+        <Select
+          placeholder="全部原因"
+          style={{ width: 150 }}
+          allowClear
+          value={fReason}
+          onChange={(v) => setFReason(v)}
+          options={REASON_OPTIONS.map((r) => ({ value: r, label: r }))}
+        />
+        <Input.Search
+          placeholder="搜索反馈内容"
+          allowClear
+          style={{ width: 220 }}
+          value={fKeyword}
+          onChange={(e) => setFKeyword(e.target.value)}
+          onSearch={(v) => fetchFeedback(1, fbPageSize, v)}
+        />
+        <DatePicker.RangePicker value={fRange} onChange={(dates) => setFRange(dates)} />
+        <Button
+          type="primary"
+          onClick={() => {
+            setFbPage(1)
+            fetchFeedback(1, fbPageSize)
+          }}
+        >
+          查询
+        </Button>
+        <Button
+          onClick={() => {
+            resetFilters()
+            setFbPage(1)
+            fetchFeedback(1, fbPageSize)
+          }}
+        >
+          重置
+        </Button>
+      </Space>
+
+      <Table<FeedbackRow>
+        rowKey="id"
+        loading={fbLoading}
+        columns={feedbackColumns}
+        dataSource={feedback}
+        pagination={{
+          current: fbPage,
+          pageSize: fbPageSize,
+          total: fbTotal,
+          showSizeChanger: true,
+          onChange: (page, pageSize) => {
+            setFbPage(page)
+            setFbPageSize(pageSize)
+            fetchFeedback(page, pageSize)
+          },
+        }}
+        size="middle"
+        expandable={{
+          expandedRowRender: (record) => (
+            <div className="fb-detail">
+              <div>
+                <b>反馈内容：</b>
+                {record.comment || <span style={{ color: '#bbb' }}>(无文字反馈)</span>}
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <b>关联消息（{record.message_role || '-'}）：</b>
+                <div className="fb-detail-msg">{record.message_content || '-'}</div>
+              </div>
+            </div>
+          ),
+        }}
+        locale={{ emptyText: <Empty description="暂无反馈数据" /> }}
+      />
+    </div>
+  )
+
   return (
     <div className="admin-container">
       <h2 className="admin-title">管理后台</h2>
-      <Spin spinning={loading}>
-        <div className="stat-cards">
-          <Card>
-            <Statistic title="总会话数" value={overview?.total_sessions ?? 0} />
-          </Card>
-          <Card>
-            <Statistic title="总消息数" value={overview?.total_messages ?? 0} />
-          </Card>
-          <Card>
-            <Statistic title="总反馈数" value={overview?.total_feedbacks ?? 0} />
-          </Card>
-          <Card>
-            <Statistic
-              title="点赞 / 点踩"
-              value={`${overview?.like_count ?? 0} / ${overview?.dislike_count ?? 0}`}
-            />
-          </Card>
-        </div>
-
-        <Card title="日均问答量（近 14 天）" className="chart-card">
-          {daily.length > 0 ? <LineChart data={daily} /> : <div className="empty-hint">暂无数据</div>}
-        </Card>
-
-        <Card title="全量会话记录" className="table-card">
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={sessions}
-            pagination={{ pageSize: 10 }}
-            size="middle"
-          />
-        </Card>
-      </Spin>
+      <Tabs
+        defaultActiveKey="overview"
+        items={[
+          { key: 'overview', label: '数据概览', children: overviewPane },
+          { key: 'feedback', label: '用户反馈', children: feedbackPane },
+        ]}
+      />
     </div>
   )
 }

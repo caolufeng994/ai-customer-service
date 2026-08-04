@@ -2,6 +2,7 @@
 Session API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+import asyncio
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.session import SessionCreate, SessionUpdate, SessionResponse, SessionDetailResponse, MessageResponse
@@ -91,6 +92,29 @@ async def update_session(
         return ApiResponse.ok(
             data=SessionResponse.model_validate(session),
             message="Session updated successfully"
+        )
+    except BaseAppException as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+
+
+@router.post("/{session_id}/title", response_model=ApiResponse[SessionResponse])
+async def generate_session_title(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """根据会话上下文智能生成/刷新标题(LLM), 写回并返回更新后的会话。
+
+    前端在每次助手回复完成后调用: 首次回复后生成贴切标题, 后续回复随上下文动态刷新;
+    若 LLM 产出与原标题一致则跳过写库, 避免冗余更新。
+    """
+    try:
+        session = await asyncio.to_thread(
+            SessionService.generate_session_title, db, session_id, current_user.id
+        )
+        return ApiResponse.ok(
+            data=SessionResponse.model_validate(session),
+            message="Session title generated"
         )
     except BaseAppException as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})

@@ -85,7 +85,13 @@ request.interceptors.response.use(
 )
 
 // SSE streaming request
-export async function postStream(
+//
+// 使用 XMLHttpRequest + onprogress 实现流式接收,而非 fetch + ReadableStream。
+// 原因:fetch 的响应体在部分浏览器/运行环境下会被整体缓冲(只有连接结束时才一次性
+// 交付),导致"思考过程/逐字回复"无法实时呈现、思考与引用来源一闪而过;而 XHR 的
+// onprogress 在分块数据到达时即触发,responseText 持续累加,是各浏览器中最稳定的
+// 流式方案(尤其适配本项目基于 POST 的 SSE 接口)。
+export function postStream(
   url: string,
   body: any,
   options: {
@@ -95,74 +101,83 @@ export async function postStream(
     headers?: Record<string, string>
     signal?: AbortSignal
   } = {}
-) {
+): Promise<void> {
   const { onEvent, onError, onDone, headers: customHeaders, signal } = options
-  const controller = new AbortController()
-  const abortSignal = signal ?? controller.signal
   const token = localStorage.getItem('token')
 
-  try {
-    const response = await fetch(`/api${url}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : '',
-        ...customHeaders,
-      },
-      body: JSON.stringify(body),
-      signal: abortSignal,
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+  return new Promise<void>((resolve) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `/api${url}`)
+    xhr.setRequestHeader('Content-Type', 'application/json')
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    if (customHeaders) {
+      for (const [k, v] of Object.entries(customHeaders)) xhr.setRequestHeader(k, v)
     }
 
-    const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error('Response body is not readable')
-    }
+    let offset = 0 // 已消费的 responseText 长度,用于增量截取新增文本
+    let buffer = '' // 未解析完的 SSE 帧
 
-    const decoder = new TextDecoder('utf-8')
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-
-      if (done) {
-        break
-      }
-
-      buffer += decoder.decode(value, { stream: true })
-
-      // Split by \n\n to get SSE frames
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || '' // Keep incomplete frame in buffer
-
-      for (const line of lines) {
-        if (line.trim() === '') continue
-
-        // Parse SSE format: data: {...}
-        const match = line.match(/^data:\s*(.+)$/)
-        if (match) {
+    const flushBuffer = () => {
+      // 只解析到最后一个完整的 \n\n 分隔帧,剩余不完整的留在 buffer 下次处理
+      const sep = buffer.lastIndexOf('\n\n')
+      if (sep === -1) return
+      const complete = buffer.slice(0, sep)
+      buffer = buffer.slice(sep + 2)
+      for (const frame of complete.split('\n\n')) {
+        if (!frame.trim()) continue
+        const m = frame.match(/^data:\s*([\s\S]+)$/)
+        if (m) {
           try {
-            const data = JSON.parse(match[1])
-            onEvent?.(data)
+            onEvent?.(JSON.parse(m[1]))
           } catch (e) {
-            console.error('Failed to parse SSE data:', match[1], e)
+            console.error('Failed to parse SSE data:', m[1], e)
           }
         }
       }
     }
 
-    onDone?.()
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return
+    xhr.onprogress = () => {
+      // responseText 已累计全部收到内容;截取本次新增部分拼入 buffer 并实时解析。
+      // 按 \n\n 边界切片不会切断多字节字符,安全。
+      const text = xhr.responseText
+      buffer += text.slice(offset)
+      offset = text.length
+      flushBuffer()
     }
-    onError?.(error as Error)
-  }
 
-  return controller
+    xhr.onload = () => {
+      // 收尾:处理尾部可能残留的帧(后端每个帧均以 \n\n 结尾,通常会被上面的 flush 覆盖)
+      const text = xhr.responseText
+      buffer += text.slice(offset)
+      offset = text.length
+      flushBuffer()
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onDone?.()
+      } else {
+        onError?.(new Error(`HTTP error! status: ${xhr.status}`))
+      }
+      resolve()
+    }
+
+    xhr.onerror = () => {
+      onError?.(new Error('Network error'))
+      resolve()
+    }
+
+    xhr.onabort = () => {
+      resolve()
+    }
+
+    if (signal) {
+      if (signal.aborted) {
+        xhr.abort()
+      } else {
+        signal.addEventListener('abort', () => xhr.abort(), { once: true })
+      }
+    }
+
+    xhr.send(JSON.stringify(body))
+  })
 }
 
 export default request

@@ -212,22 +212,47 @@ graph TB
 
 ### 8. LLM Client（大语言模型客户端）
 
-**文件**: `app/rag/llm_client.py`
+**文件**: `app/rag/llm_client.py`（封装 `app/framework/llm.py` 的 BaseLLM 抽象）
 
 **功能**: 调用大语言模型生成回答
 
 **支持模型**:
-- DashScope: qwen-plus（通义千问，当前唯一支持的大模型提供方）
+- DashScope: qwen-plus（通义千问，主模型，当前唯一支持的云端提供方）
 
 **关键方法**:
 - `chat()`: 非流式对话
-- `chat_stream()`: 流式对话
-- `fallback_to_ollama()`: 降级到本地模型（已移除，当前 LLM 异常统一返回错误）
+- `chat_stream()`: 流式对话（逐 token 实时 yield，前端经 SSE 展示）
+
+**降级与容错**:
+- 通过 `FallbackLLM(primary=DashScopeLLM, secondary=OllamaLLM)` 实现云端→本地降级：DashScope 不可用时切换本地 Ollama（`qwen2:7b`，需本地部署）；
+- 流式生成由 DashScopeLLM 逐 token 输出，生成异常时由上层统一返回错误。
 
 **设计要点**:
-- 统一接口抽象
-- 流式输出支持
-- 模型切换降级
+- 统一接口抽象（`framework/llm.py` 的 `BaseLLM`）
+- 流式输出支持（chat_stream 实时吐字）
+- 云端→本地模型切换降级
+
+---
+
+### 9. 防编造自检（Faithfulness Gate）
+
+**文件**: `app/rag/faithfulness.py`（`FaithfulnessChecker`）
+
+**功能**: 回答生成后校验答案是否被知识库上下文支撑，抑制"编造/幻觉"类陈述。
+
+**流程**:
+- 生成完成后，以 `FaithfulnessChecker` 对（上下文 + 回答）做判定；
+- 产出 `grounded: bool`（是否被支撑）与 `unsupported_claims: List[str]`（具体不可靠陈述）；
+- 判定结果随消息落库（`messages.grounded` / `messages.unsupported_claims` 列），并经 `done` 事件回传前端；前端在 `grounded=false` 时展示告警，但**不回改已流式展示的文本**（避免"先显后撤"割裂）。
+
+**配置**（`app/config.py`）:
+- `enable_faithfulness_check: bool = True`（默认开启）
+- `faithfulness_temperature` / `faithfulness_max_correct` 控制判定严格度
+
+**设计要点**:
+- 后置校验，不打断流式展示；
+- 仅做"是否可支撑"判定与告警，不改写用户已见内容；
+- 是意图门控、检索阈值过滤之外的第三道幻觉防线。
 
 ---
 
@@ -237,7 +262,7 @@ graph TB
 
 ### 1. 意图识别（`app/agent/intent_classifier.py`）
 
-将用户 query 归类为 `qa_set.json` 定义的 7 类业务意图：
+将用户 query 归类为评测集 `qa_set.json`（`backend/tests/eval/qa_set.json`）定义的 7 类业务意图之一（运行期分类器使用内置 `INTENT_LEXICON`，与之保持对齐；`qa_set.json` 为评测 / 对齐基准，非运行期加载文件）：
 
 | 意图 | 含义 | 路由目标 |
 |------|------|----------|
@@ -310,31 +335,44 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant API
+    participant Intent as 意图门控
+    participant Rewriter as QueryRewriter
     participant Retriever
     participant Embedder
     participant VectorStore
     participant ContextBuilder
     participant PromptBuilder
     participant LLM
+    participant Faith as Faithfulness Gate
     participant DB
 
     User->>API: 发送问题
     API->>DB: 检查配额
     API->>DB: 保存用户消息
-    API->>Retriever: 检索相关内容
-    Retriever->>Embedder: 向量化问题
-    Embedder->>VectorStore: 相似度查询
-    VectorStore->>Retriever: 返回检索结果
-    Retriever->>ContextBuilder: 传递检索结果
-    ContextBuilder->>ContextBuilder: 构建上下文
-    ContextBuilder->>PromptBuilder: 传递上下文
-    PromptBuilder->>PromptBuilder: 构建提示词
-    PromptBuilder->>LLM: 发送提示词
-    LLM->>LLM: 流式生成回答
-    LLM->>API: 流式返回内容
-    API->>User: SSE流式推送
-    LLM->>DB: 保存助手消息
-    API->>DB: 增加配额计数
+    API->>Intent: 意图分类 + 路由
+    Intent-->>API: RAG / 兜底
+    alt 兜底意图
+        API->>User: SSE 推送兜底提示
+    else 知识类意图
+        API->>Rewriter: 结合历史改写检索 query
+        Rewriter-->>API: retrieval_query
+        API->>Retriever: 检索相关内容(retrieval_query)
+        Retriever->>Embedder: 向量化问题
+        Embedder->>VectorStore: 相似度查询
+        VectorStore->>Retriever: 返回检索结果
+        Retriever->>ContextBuilder: 传递检索结果
+        ContextBuilder->>ContextBuilder: 构建上下文
+        ContextBuilder->>PromptBuilder: 传递上下文
+        PromptBuilder->>PromptBuilder: 构建提示词
+        PromptBuilder->>LLM: 发送提示词
+        API->>LLM: thinking_start（思考过程）
+        LLM->>LLM: 流式生成回答
+        API->>User: SSE 流式推送(思考→正文)
+        LLM->>Faith: 防编造自检(上下文+回答)
+        Faith-->>LLM: grounded + unsupported_claims
+        LLM->>DB: 保存助手消息(含 grounded)
+        API->>DB: 增加配额计数
+    end
 ```
 
 ## 性能优化
@@ -355,9 +393,9 @@ sequenceDiagram
 - 非阻塞I/O
 
 ### 4. 降级机制
-- 相似度阈值降级
-- LLM模型降级（云端→本地）
-- 空检索降级提示
+- 空检索降级提示（无上下文兜底话术，由意图门控 / RAG 主链路统一处理）
+- LLM 云端→本地降级（DashScope 不可用时 `FallbackLLM` 切换本地 Ollama，需本地部署）
+- 防编造自检后置告警（`grounded=false` 时前端提示，不回改已展示文本）
 
 ## 可靠性设计
 
@@ -393,6 +431,8 @@ sequenceDiagram
 - Service层：业务逻辑
 - RAG Core层：AI核心
 - Infra层：基础设施
+
+> 扩展骨架说明：`app/framework/` 下除 `llm.py`（LLM 抽象，已被 `rag/llm_client.py` 使用）、`memory.py`（QueryRewriter，已被对话主链路使用）外，`agent.py` / `chain.py` / `planner.py` / `tools.py` 为预留的多 Agent / 工具调用扩展骨架，当前对话主链路未启用。
 
 ## 监控指标
 

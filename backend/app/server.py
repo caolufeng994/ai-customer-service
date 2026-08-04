@@ -210,13 +210,14 @@ app.add_exception_handler(Exception, generic_exception_handler)
 from app.core.tracing import trace_context
 
 _trace_dep = [Depends(trace_context)]
-from app.api import auth, session, knowledge, chat, feedback, trace as trace_router, stats
+from app.api import auth, session, knowledge, chat, feedback, trace as trace_router, stats, admin_feedback
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"], dependencies=_trace_dep)
 app.include_router(session.router, prefix="/api/sessions", tags=["sessions"], dependencies=_trace_dep)
 app.include_router(knowledge.router, prefix="/api/kb", tags=["knowledge"], dependencies=_trace_dep)
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"], dependencies=_trace_dep)
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"], dependencies=_trace_dep)
 app.include_router(stats.router, prefix="/api/stats", tags=["admin-stats"], dependencies=_trace_dep)
+app.include_router(admin_feedback.router, tags=["admin-feedbacks"], dependencies=_trace_dep)
 app.include_router(trace_router.router, tags=["traces"], dependencies=_trace_dep)
 
 # Serve bundled Swagger UI / ReDoc assets locally (offline-friendly)

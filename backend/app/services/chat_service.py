@@ -410,24 +410,29 @@ class ChatService:
                 yield {"type": "done", "data": done_data}
                 return
 
-            # —— 生成回答(先缓冲, 再做防编造自检, 最后才把"已验证"内容推给前端) ——
-            # 采用"拦截式": 用户看到的回答一定经过忠实度校验/纠正, 避免先显编造再撤回。
-            raw_chunks = []
+            # —— 生成回答(流式直出, 实时推给前端) ——
+            # agent 的正式回复在此以"真实流式"方式逐 token 推送给前端: 每个 LLM 输出块
+            # 立即作为 content 事件下发, 用户在生成过程中即可看到文字逐块出现, 而非等待
+            # 整段生成后再一次性灌出。full_response 同时累积, 用于后续的防编造自检与落库。
+            full_response = ""
             with span("llm_generate", attributes={"model": settings.dashscope_model or "unknown"}) as s_llm:
                 try:
                     for chunk in llm_client.chat_stream(messages, temperature=0.7, max_tokens=1000):
-                        raw_chunks.append(chunk)
-                    full_response = "".join(raw_chunks)
+                        if chunk:
+                            full_response += chunk
+                            yield {"type": "content", "data": chunk}
                     finish_reason = "stop"
                 except Exception as llm_error:
                     logger.error(f"LLM generation failed: {llm_error}")
                     s_llm.set_status_error(str(llm_error))
                     full_response = "抱歉，服务暂时不可用，请稍后重试。"
                     finish_reason = "error"
+                    yield {"type": "content", "data": full_response}
 
-            # —— 防编造自检 (Faithfulness Gate) ——
-            # 在把答案发给用户前, 比对"回答"与"召回上下文"的事实一致性;
-            # 不忠实则触发基于 [K] 内容的自我纠正并复检, 仍不通过则标记 grounded=False。
+            # —— 防编造自检 (Faithfulness Gate, 事后标注) ——
+            # 由于回复已实时流式展示, 此处仅做"忠实度判定"并把结果通过 done 事件回传
+            # (grounded=false 时前端展示告警), 不再回改已展示文本, 避免"先显示后撤回"的
+            # 割裂观感。落库的也保持与展示一致(即流式原文), 保证历史回看与实时一致。
             grounded = True
             unsupported_claims: list = []
             if context and settings.enable_faithfulness_check and finish_reason == "stop":
@@ -437,28 +442,10 @@ class ChatService:
                         verdict = checker.check(full_response, context)
                         s_f.set_attribute("faithful", str(verdict.is_faithful))
                         if not verdict.is_faithful:
-                            candidate = full_response
-                            for _ in range(settings.faithfulness_max_correct):
-                                fixed = checker.correct(candidate, context, verdict.unsupported_claims)
-                                if not fixed:
-                                    break
-                                recheck = checker.check(fixed, context)
-                                s_f.set_attribute("recheck_faithful", str(recheck.is_faithful))
-                                candidate = fixed
-                                if recheck.is_faithful:
-                                    break
-                            final_verdict = checker.check(candidate, context)
-                            if not final_verdict.is_faithful:
-                                grounded = False
-                                unsupported_claims = verdict.unsupported_claims
-                            # 不论是否完全忠实, 都用"最后一次纠正版"(至少已剔除被标记的陈述)
-                            full_response = candidate
+                            grounded = False
+                            unsupported_claims = verdict.unsupported_claims
                 except Exception as fe:
                     logger.warning(f"Faithfulness gate error (degraded to original answer): {fe}")
-
-            # 把最终(已验证/已纠正)回答流式推给前端, 保留逐行流式观感
-            for chunk in ChatService._stream_verified_text(full_response):
-                yield {"type": "content", "data": chunk}
 
             latency_ms = int((time.time() - start_time) * 1000)
 
@@ -595,19 +582,14 @@ class ChatService:
     @staticmethod
     def _stream_verified_text(text: str):
         """
-        把"已通过防编造自检"的回答切分为流式块(按换行 + 超长行再切分),
-        用于模拟逐字流式推送, 兼顾"拦截式校验"与"流式观感"。
+        把"已通过防编造自检"的回答切分为小流式块,
+        模拟逐字/逐段实时渲染, 避免短答案一次性出现导致"缺失流式输出"。
         """
         if not text:
             return
-        lines = text.split("\n")
-        for idx, line in enumerate(lines):
-            if line:
-                # 超长行按字符再切分, 避免单块过大
-                for i in range(0, len(line), 80):
-                    yield line[i:i + 80]
-            if idx != len(lines) - 1:
-                yield "\n"
+        # 按 4 个字符步长切分(中文约 1-2 个词), 兼顾观感与网络开销
+        for i in range(0, len(text), 4):
+            yield text[i:i + 4]
 
     @staticmethod
     def _generate_followup_suggestions(
@@ -651,6 +633,10 @@ class ChatService:
         Stream chat response using RAG pipeline.
         Returns an async generator that yields SSE-formatted strings
         (``data: {json}\\n\\n``) consumed by FastAPI StreamingResponse.
+
+        注意: 不再在 content 事件间人为 sleep。LLM 本身即以 token 粒度产出
+        (framework/llm.py 的 chat_stream 逐块 yield delta.content), 由 _chat_events
+        直接实时下发给前端, 任何额外延迟只会拖慢真实流式观感。
         """
         for event in ChatService._chat_events(db, user_id, request):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

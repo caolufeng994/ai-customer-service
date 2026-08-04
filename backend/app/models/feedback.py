@@ -3,7 +3,7 @@ Feedback model
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import BigInteger, Integer, Text, DateTime, func, Index, ForeignKey, UniqueConstraint
+from sqlalchemy import BigInteger, Integer, Text, String, DateTime, func, Index, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -21,6 +21,9 @@ class Feedback(Base):
     )
     rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 for thumbs up, -1 for thumbs down
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )  # 结构化反馈原因: 答非所问/事实错误/没召回/太啰嗦/其他; 便于失败 case 归类分析
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (

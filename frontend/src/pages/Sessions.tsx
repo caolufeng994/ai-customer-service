@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react'
-import { Layout, List, Input, Button, Card, Tag, message, Modal } from 'antd'
-import { SendOutlined, PlusOutlined, LikeOutlined, DislikeOutlined } from '@ant-design/icons'
+import { Layout, List, Input, Button, Card, Tag, message, Modal, Popconfirm, Select } from 'antd'
+import { SendOutlined, PlusOutlined, LikeOutlined, DislikeOutlined, DeleteOutlined } from '@ant-design/icons'
 import request, { postStream } from '../utils/request'
 
 const { Header, Content, Sider } = Layout
@@ -86,6 +86,7 @@ export default function Sessions() {
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null)
   const [feedbackType, setFeedbackType] = useState<'like' | 'dislike' | null>(null)
   const [feedbackComment, setFeedbackComment] = useState('')
+  const [feedbackReason, setFeedbackReason] = useState<string | undefined>(undefined)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -128,6 +129,28 @@ export default function Sessions() {
     }
   }
 
+  const deleteSession = async (sessionId: number, event: React.MouseEvent) => {
+    event.stopPropagation()
+    try {
+      await request.delete(`/sessions/${sessionId}`)
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      if (currentSession === sessionId) {
+        setCurrentSession(null)
+        setMessages([])
+        if (sessions.length > 1) {
+          const remaining = sessions.filter((s) => s.id !== sessionId)
+          if (remaining.length > 0) {
+            setCurrentSession(remaining[0].id)
+            loadMessages(remaining[0].id)
+          }
+        }
+      }
+      message.success('会话删除成功')
+    } catch (error) {
+      // Error handled by interceptor
+    }
+  }
+
   // 首次对话用用户首条消息的前 20 字(去空白)作为会话标题, 取代默认的"新对话"。
   const titleSession = async (sessionId: number, text: string) => {
     const trimmed = text.replace(/\s+/g, ' ').trim()
@@ -142,10 +165,25 @@ export default function Sessions() {
     }
   }
 
+  // 智能标题: 调用后端 LLM 接口, 基于当前会话上下文生成/刷新贴切标题并写回。
+  // 首次回复后生成贴切标题, 后续回复随上下文动态更新(后端在标题不变时跳过写库)。
+  const refreshSmartTitle = async (sessionId: number) => {
+    try {
+      const res = await request.post(`/sessions/${sessionId}/title`)
+      const updated = res.data as Session
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, title: updated.title } : s))
+      )
+    } catch (error) {
+      // 标题刷新失败(如 LLM 不可用)不影响对话主流程, 沿用既有标题
+    }
+  }
+
   const handleFeedback = (messageId: number, type: 'like' | 'dislike') => {
     setSelectedMessageId(messageId)
     setFeedbackType(type)
     setFeedbackComment('')
+    setFeedbackReason(undefined)
     setFeedbackModalVisible(true)
   }
 
@@ -156,10 +194,13 @@ export default function Sessions() {
       await request.post('/feedback', {
         message_id: selectedMessageId,
         rating: feedbackType === 'like' ? 1 : -1,
-        comment: feedbackComment
+        comment: feedbackComment,
+        reason: feedbackReason
       })
       message.success('反馈提交成功')
       setFeedbackModalVisible(false)
+      setFeedbackComment('')
+      setFeedbackReason(undefined)
     } catch (error) {
       // Error handled by interceptor
     }
@@ -168,10 +209,11 @@ export default function Sessions() {
   const sendMessage = async (presetText?: string) => {
     const userMessage = presetText ?? input
     if (!userMessage.trim() || !currentSession) return
-    // 若该会话仍是默认标题"新对话", 用首条消息自动生成标题(后续消息不再覆盖)
-    const cur = sessions.find((s) => s.id === currentSession)
+    const sid = currentSession
+    // 若该会话仍是默认标题"新对话", 用首条消息自动生成即时标题(与系统机制一致)
+    const cur = sessions.find((s) => s.id === sid)
     if (cur && cur.title === '新对话') {
-      titleSession(currentSession, userMessage)
+      titleSession(sid, userMessage)
     }
     setInput('')
     setMessages([...messages, { id: Date.now(), role: 'user', content: userMessage, created_at: new Date().toISOString() }])
@@ -211,9 +253,16 @@ export default function Sessions() {
               setIsThinking(false)
             } else if (event.type === 'status') {
               console.log('Status:', event.data)
-              // 进入正式回答阶段(generating)时,确保思考面板已关闭。
+              // 进入正式回答阶段(generating)时,标记不再是"思考中";
+              // 思考文本暂时保留,直到第一个 content 到达再清除,避免空白闪烁。
               if (event.data === 'generating') setIsThinking(false)
             } else if (event.type === 'content') {
+              // 正式回复开始输出:清除思考过程(过渡态),仅保留并流式展示最终回复
+              if (thinkingRef.current !== '' || thinking !== '') {
+                thinkingRef.current = ''
+                setThinking('')
+              }
+              setIsThinking(false)
               streamingRef.current += event.data
               setStreamingContent(streamingRef.current)
             } else if (event.type === 'done') {
@@ -226,8 +275,6 @@ export default function Sessions() {
                 // 防编造自检结果: grounded=false 时前端展示告警
                 grounded: event.data.grounded,
                 unsupported_claims: event.data.unsupported_claims || [],
-                // 将本次对话的思考链一并持久化,历史记录中也可回看 agent 推理过程。
-                thinking: thinkingRef.current || undefined,
                 // 追问引导: 后端在 done 事件中附带的 2-3 个相关追问建议
                 suggestions: event.data.suggestions || [],
               }
@@ -236,6 +283,8 @@ export default function Sessions() {
               streamingRef.current = ''
               setThinking('')
               thinkingRef.current = ''
+              // 回复完成 -> 基于上下文智能生成/刷新会话标题(侧栏即时更新)
+              refreshSmartTitle(sid)
             } else if (event.type === 'error') {
               message.error(event.data || '发生错误')
             }
@@ -284,6 +333,23 @@ export default function Sessions() {
                 loadMessages(session.id)
               }}
               className={currentSession === session.id ? 'active-session' : ''}
+              actions={[
+                <Popconfirm
+                  title="确认删除"
+                  description="确定要删除这个会话吗？"
+                  onConfirm={(e) => deleteSession(session.id, e as React.MouseEvent)}
+                  okText="确定"
+                  cancelText="取消"
+                >
+                  <Button
+                    type="text"
+                    icon={<DeleteOutlined />}
+                    danger
+                    size="small"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Popconfirm>
+              ]}
             >
               <List.Item.Meta
                 title={session.title}
@@ -310,12 +376,6 @@ export default function Sessions() {
                       {new Date(msg.created_at).toLocaleTimeString()}
                     </span>
                   </div>
-                  {msg.role === 'assistant' && msg.thinking && (
-                    <div style={{ marginBottom: 8, padding: '8px 12px', background: '#f5f7fa', borderLeft: '3px solid #b37feb', borderRadius: 4, color: '#5c5c5c', fontSize: 13, whiteSpace: 'pre-wrap' }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4, color: '#722ed1' }}>💭 思考过程</div>
-                      {msg.thinking}
-                    </div>
-                  )}
                   {renderAnswer(msg.content)}
                   {msg.role === 'assistant' && msg.grounded === false && (
                     <div className="grounded-warning">
@@ -333,10 +393,13 @@ export default function Sessions() {
                   {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (() => {
                     // 只展示回答中真正被 [K编号] 引用的来源, 让引用精确对应需求内容;
                     // 若回答里没有任何 [K编号](异常/纯直答), 退回展示全部来源以免信息丢失。
+                    // 若 LLM 标注的 [K编号] 与可用来源的 k_index 不完全对齐(如越界/错位),
+                    // 过滤结果为空时同样退回展示全部来源, 避免"明明有来源却一处都不显示"。
                     const cited = citedKIndices(msg.content)
-                    const shown = cited.size > 0
+                    const filtered = cited.size > 0
                       ? msg.sources.filter((s) => s.k_index != null && cited.has(s.k_index))
                       : msg.sources
+                    const shown = filtered.length > 0 ? filtered : msg.sources
                     if (shown.length === 0) return null
                     return (
                       <div className="message-sources">
@@ -344,7 +407,6 @@ export default function Sessions() {
                         {shown.map((source, index) => (
                           <div key={index} className="source-item">
                             <Tag color="blue">{source.k_index != null ? `[K${source.k_index}]` : `来源${index + 1}`}</Tag>
-                            <Tag color="geekblue">{(source.score * 100).toFixed(0)}%</Tag>
                             <span className="source-name">{source.doc_name || `doc ${source.doc_id}`}</span>
                             <span className="source-snippet" title={source.snippet || ''}>{source.snippet}</span>
                           </div>
@@ -439,13 +501,36 @@ export default function Sessions() {
         title="提交反馈"
         open={feedbackModalVisible}
         onOk={submitFeedback}
-        onCancel={() => setFeedbackModalVisible(false)}
+        onCancel={() => {
+          setFeedbackModalVisible(false)
+          setFeedbackComment('')
+          setFeedbackReason(undefined)
+        }}
         okText="提交"
         cancelText="取消"
       >
         <div style={{ marginBottom: 16 }}>
           <p>您选择了: {feedbackType === 'like' ? '👍 有帮助' : '👎 无帮助'}</p>
         </div>
+        {feedbackType === 'dislike' && (
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ marginBottom: 8 }}>问题类型（可选）：</p>
+            <Select
+              style={{ width: '100%' }}
+              placeholder="选择问题类型，便于我们优化"
+              allowClear
+              value={feedbackReason}
+              onChange={(v) => setFeedbackReason(v)}
+              options={[
+                { value: '答非所问', label: '答非所问' },
+                { value: '事实错误', label: '事实错误' },
+                { value: '没召回', label: '没召回相关内容' },
+                { value: '太啰嗦', label: '回答太啰嗦' },
+                { value: '其他', label: '其他' },
+              ]}
+            />
+          </div>
+        )}
         <Input.TextArea
           placeholder="可选：添加您的评论..."
           value={feedbackComment}

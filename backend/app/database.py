@@ -65,6 +65,12 @@ def init_db():
     # 既有 NOT NULL 列需幂等 ALTER, 否则不再写 salt 的新注册会插入失败; 新库为 no-op。
     _ensure_user_salt_nullable(engine)
 
+    # 为已存在的 feedbacks 表补齐 comment / reason 列(结构化反馈字段)。
+    # 历史库可能由早期无 comment 的版本创建, create_all 不会 ALTER 既有表,
+    # 会导致带文字反馈的提交因 "Unknown column" 报错被吞——这正是"文字反馈没记录"的真凶。
+    # 幂等补齐: 列已存在则跳过, 新库由 create_all 直接建好, 此处为 no-op。
+    _ensure_feedback_columns(engine)
+
 
 def _ensure_message_faithfulness_columns(engine):
     """幂等补齐 messages 表的防编造自检列; 非致命, 失败仅记录告警。
@@ -147,3 +153,35 @@ def _ensure_user_salt_nullable(engine):
                 logger.info("Migrated users table: salt column set to nullable (deprecated)")
     except Exception as e:  # pragma: no cover - 尽力而为, 不影响启动
         logger.warning(f"Skipped users.salt-nullable migration (non-fatal): {e}")
+
+
+def _ensure_feedback_columns(engine):
+    """幂等补齐 feedbacks 表的 comment / reason 列(结构化反馈字段); 非致命, 失败仅记录告警。
+
+    仅在列不存在时执行 ALTER, 已存在则跳过。兼容 MySQL。
+    历史库若无 comment 列, 带文字反馈的提交会因 "Unknown column 'comment'" 报错被吞,
+    表现为"文字反馈没记录"——此处自愈该问题。reason 为新字段, 同样补齐。
+    """
+    try:
+        with engine.connect() as conn:
+            schema = conn.exec_driver_sql("SELECT DATABASE()").scalar()
+            if not schema:
+                return
+            rows = conn.exec_driver_sql(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'feedbacks'",
+                (schema,),
+            ).fetchall()
+            existing = {r[0] for r in rows}
+            # (列名, DDL): 仅在缺失时补齐
+            needed = {
+                "comment": "ALTER TABLE feedbacks ADD COLUMN comment TEXT NULL",
+                "reason": "ALTER TABLE feedbacks ADD COLUMN reason VARCHAR(32) NULL",
+            }
+            for col, ddl in needed.items():
+                if col not in existing:
+                    conn.exec_driver_sql(ddl)
+                    conn.commit()
+                    logger.info(f"Migrated feedbacks table: added column '{col}'")
+    except Exception as e:  # pragma: no cover - 尽力而为, 不影响启动
+        logger.warning(f"Skipped feedbacks-column migration (non-fatal): {e}")

@@ -724,8 +724,9 @@ Content-Type: application/json
 ```json
 {
   "message_id": 2,
-  "rating": 1,
-  "comment": "回答很有帮助"
+  "rating": -1,
+  "comment": "答案与事实不符",
+  "reason": "事实错误"
 }
 ```
 
@@ -733,6 +734,7 @@ Content-Type: application/json
 - `message_id` (必填): 消息 ID，必须为正整数（`> 0`；填 0 或缺失返回 422）
 - `rating` (必填): 评分，**取值 `-1`（点踩）、`0`（中立）、`1`（点赞）**；越界返回 422
 - `comment` (可选): 评论，最多 500 字符
+- `reason` (可选): 结构化反馈原因，**仅在 `rating = -1`（点踩）时有意义**；取值为 `答非所问` / `事实错误` / `没召回` / `太啰嗦` / `其他`，最多 32 字符。用于失败 case 归类与后续优化分析
 
 **响应（200）**：
 
@@ -745,8 +747,9 @@ Content-Type: application/json
     "id": 1,
     "message_id": 2,
     "user_id": 1,
-    "rating": 1,
-    "comment": "回答很有帮助",
+    "rating": -1,
+    "comment": "答案与事实不符",
+    "reason": "事实错误",
     "created_at": "2024-01-01T00:00:00"
   }
 }
@@ -782,6 +785,7 @@ Content-Type: application/json
       "user_id": 1,
       "rating": 1,
       "comment": "回答很有帮助",
+      "reason": null,
       "created_at": "2024-01-01T00:00:00"
     }
   ],
@@ -815,9 +819,10 @@ Content-Type: application/json
     "id": 1,
     "message_id": 2,
     "user_id": 1,
-    "rating": 1,
-    "comment": "回答很有帮助",
-    "created_at": "2024-01-01T00:00:00"
+      "rating": 1,
+      "comment": "回答很有帮助",
+      "reason": null,
+      "created_at": "2024-01-01T00:00:00"
   }
 }
 ```
@@ -845,6 +850,86 @@ Content-Type: application/json
 
 **常见错误**：`404` + `detail.code = NOT_FOUND`（反馈不存在或不属于当前用户）；`401` + `detail.code = AUTH_ERROR`。
 
+## 管理后台接口
+
+管理后台接口用于系统运营与反馈分析，**全部要求管理员角色**（`User.role = "admin"`）。普通用户访问返回 `403` + `detail.code = FORBIDDEN`（见错误码表）。前端入口为「管理后台」页面（`/admin`），包含「数据概览」与「用户反馈」两个区域。
+
+### 统计概览（admin-stats）
+
+> 以下 4 个接口均挂在 `/api/stats` 下，需管理员权限。
+
+- `GET /api/stats/overview`：返回 `{total_sessions, total_messages, total_feedbacks, like_count, dislike_count}`。
+- `GET /api/stats/sessions?skip=0&limit=50`：全量会话列表（分页）。
+- `GET /api/stats/daily-qa?days=14`：近 N 天每日问答量。
+- `GET /api/stats/feedbacks?days=14`：近 N 天每日点赞/点踩分布。
+
+### 反馈管理（admin-feedbacks）
+
+管理后台集中展示并筛选全量用户反馈，支持浏览与多维度筛选，便于定位失败 case、反哺优化。
+
+#### 反馈列表
+
+**GET** `/api/admin/feedbacks`
+
+查询参数（均可选）：
+
+- `skip` / `limit`：分页，默认 0 / 20，范围 0– / 1–100
+- `rating`：按评分过滤，`1`（点赞）/ `-1`（点踩）
+- `reason`：按结构化原因过滤（`答非所问` / `事实错误` / `没召回` / `太啰嗦` / `其他`）
+- `keyword`：反馈文字内容模糊匹配（`comment LIKE %keyword%`）
+- `start_date` / `end_date`：提交日期区间（`YYYY-MM-DD`，`end_date` 含当天）
+- `sort_by`：排序字段，`created_at` / `rating` / `id`（默认 `created_at`）
+- `order`：`asc` / `desc`（默认 `desc`）
+
+**响应（200，分页结构）**：`data` 为 `AdminFeedbackItem` 数组，每条除基础字段外还**富化**了关联上下文：
+
+```json
+{
+  "success": true,
+  "code": "SUCCESS",
+  "data": [
+    {
+      "id": 12,
+      "message_id": 88,
+      "user_id": 3,
+      "rating": -1,
+      "comment": "这个答案不对",
+      "reason": "事实错误",
+      "created_at": "2026-08-05T10:12:00",
+      "session_id": 21,
+      "session_title": "如何申请退款",
+      "user_account": "user@example.com",
+      "message_content": "（被评价的那条 AI 回答正文）",
+      "message_role": "assistant"
+    }
+  ],
+  "meta": { "total": 1, "page": 1, "page_size": 20, "total_pages": 1 }
+}
+```
+
+**常见错误**：`403` + `detail.code = FORBIDDEN`（非管理员）；`401` + `detail.code = AUTH_ERROR。
+
+#### 反馈汇总
+
+**GET** `/api/admin/feedbacks/summary`
+
+返回全量反馈的汇总统计，便于管理后台快速掌握分布：
+
+```json
+{
+  "success": true,
+  "code": "SUCCESS",
+  "data": {
+    "total": 128,
+    "like_count": 90,
+    "dislike_count": 38,
+    "by_reason": { "事实错误": 12, "没召回": 8, "答非所问": 6, "太啰嗦": 5, "其他": 7, "(未选择)": 0 }
+  }
+}
+```
+
+> 说明：点踩时用户可（可选）选择 `reason`；未选原因时归入 `by_reason` 的 `"(未选择)"` 键。该汇总结构可与「RAG 质量评估 / 失败 case 分析」飞轮结合，将高频失败原因回流至评测集（见《项目说明.md》反馈飞轮章节）。
+
 ## 健康检查
 
 **GET** `/health`
@@ -869,7 +954,7 @@ Content-Type: application/json
 |--------|-----------|------|
 | `VALIDATION_ERROR` | 400 / 422 | 参数校验失败（业务层，如消息过长、重复反馈）。注意 pydantic 字段级校验返回 422，无 `code` 字段 |
 | `AUTH_ERROR` | 401 | 认证失败（缺失/无效 token、账号不存在、密码错误） |
-| `AUTHORIZATION_ERROR` | 403 | 权限不足 |
+| `FORBIDDEN` | 403 | 权限不足（如非管理员访问管理后台接口） |
 | `NOT_FOUND` | 404 | 资源不存在（会话/文档/消息等） |
 | `QUOTA_EXCEEDED` | 429 | 超出每日提问配额 |
 | `INVALID_FILE_TYPE` | 400 | 上传文件类型不支持（仅 txt/md/pdf/docx） |
@@ -898,6 +983,6 @@ Content-Type: application/json
 > 注：知识库增改（`GET`/`PUT /api/kb/documents/{document_id}`）、反馈列表/详情/删除（`GET`/`GET`/`DELETE /api/feedback[/...]`）、聊天历史（`GET /api/chat/history`）与非流式发送（`POST /api/chat/send`）接口已在正文章节补充，不再属于差距项。
 
 1. **会话消息引用（citation）缺失**：需求要求对话历史可溯源至引用来源，`MessageCitationResponse` 模型已定义但 `GET /api/sessions/{id}` 的 `messages` 未填充 `citation` 字段。
-2. **缺 `GET /api/stats/overview` 统计接口**：需求规格（P2，可选）中列出的概览统计接口当前未实现。
+2. **失败 case 自动分析与评测集回流（可选增强）**：管理后台已实现反馈的浏览与筛选（`GET /api/admin/feedbacks` 等，详见「管理后台接口」章节），但将高频失败原因自动归类、并回流至 RAG 评测集（`qa_set.json`）的自动化链路尚未实现，可作为后续优化（见《项目说明.md》反馈飞轮章节）。
 3. **SSE 增强事件未实现**：需求 §3.5 要求的 `meta` 事件、`suggestion`（追问建议）事件、以及「引用先于正文」的推送顺序，当前代码未实现；引用来源目前仅在 `done` 事件以 `sources` 形式返回。用户已确认 SSE 测试困难可延后处理。
 4. **错误响应格式不统一（可选优化）**：绝大多数业务错误返回 `{"detail":{code,message}}`，而未捕获 500 走 `ApiResponse` 信封。建议后续统一为单一信封结构以降低客户端解析成本。

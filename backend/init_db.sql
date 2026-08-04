@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS feedbacks (
     user_id BIGINT UNSIGNED NOT NULL,
     rating TINYINT NOT NULL COMMENT '1 for thumbs up, -1 for thumbs down',
     comment TEXT NULL,
+    reason VARCHAR(32) NULL COMMENT '结构化反馈原因: 答非所问/事实错误/没召回/太啰嗦/其他',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
