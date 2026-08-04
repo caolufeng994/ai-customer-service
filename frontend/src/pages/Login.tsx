@@ -26,7 +26,7 @@ export default function Login() {
       }
       const response = await request.post('/auth/login', payload)
       localStorage.setItem('token', response.data.token)
-      message.success('Login successful')
+      message.success('登录成功')
       navigate('/sessions')
     } catch (error) {
       // Error handled by interceptor
@@ -38,11 +38,11 @@ export default function Login() {
   return (
     <div className="login-page">
       <Card
-        title="AI Customer Service"
+        title="AI 智能客服"
         className="login-card"
       >
         <div className="login-subtitle">
-          <p>Welcome back! Please login to continue</p>
+          <p>欢迎回来！请登录以继续</p>
         </div>
         <Form
           name="login"
@@ -51,25 +51,25 @@ export default function Login() {
           layout="vertical"
         >
           <Form.Item
-            label="Phone or Email"
+            label="手机号或邮箱"
             name="phone_or_email"
-            rules={[{ required: true, message: 'Please input your phone or email!' }]}
+            rules={[{ required: true, message: '请输入手机号或邮箱！' }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="Enter your phone or email"
+              placeholder="请输入手机号或邮箱"
               size="large"
             />
           </Form.Item>
 
           <Form.Item
-            label="Password"
+            label="密码"
             name="password"
-            rules={[{ required: true, message: 'Please input your password!' }]}
+            rules={[{ required: true, message: '请输入密码！' }]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="Enter your password"
+              placeholder="请输入密码"
               size="large"
             />
           </Form.Item>
@@ -82,9 +82,13 @@ export default function Login() {
               size="large"
               loading={loading}
             >
-              Login
+              登录
             </Button>
           </Form.Item>
+
+          <div style={{ textAlign: 'center', marginTop: 4 }}>
+            还没有账号？<a onClick={() => navigate('/register')}>立即注册</a>
+          </div>
         </Form>
       </Card>
     </div>

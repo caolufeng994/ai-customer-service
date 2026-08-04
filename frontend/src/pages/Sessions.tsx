@@ -140,7 +140,7 @@ export default function Sessions() {
         rating: feedbackType === 'like' ? 1 : -1,
         comment: feedbackComment
       })
-      message.success('Feedback submitted successfully')
+      message.success('反馈提交成功')
       setFeedbackModalVisible(false)
     } catch (error) {
       // Error handled by interceptor
@@ -213,11 +213,11 @@ export default function Sessions() {
               setThinking('')
               thinkingRef.current = ''
             } else if (event.type === 'error') {
-              message.error(event.data || 'An error occurred')
+              message.error(event.data || '发生错误')
             }
           },
           onError: (error) => {
-            message.error(error.message || 'Stream error occurred')
+            message.error(error.message || '流传输出错')
           },
           onDone: () => {
             setLoading(false)
@@ -225,7 +225,7 @@ export default function Sessions() {
         }
       )
     } catch (error) {
-      message.error('Failed to send message')
+      message.error('发送消息失败')
       setLoading(false)
     }
   }
@@ -248,7 +248,7 @@ export default function Sessions() {
             size="large"
             onClick={createSession}
           >
-            New Chat
+            新建对话
           </Button>
         </div>
         <List
@@ -271,7 +271,7 @@ export default function Sessions() {
       </Sider>
       <Layout>
         <Header>
-          <h2>AI Customer Service</h2>
+          <h2>AI 客服</h2>
         </Header>
         <Content>
           <div className="content-container">
@@ -280,7 +280,7 @@ export default function Sessions() {
                 <Card key={msg.id} className={msg.role === 'user' ? 'user-message' : 'ai-message'}>
                   <div className="message-header">
                     <Tag color={msg.role === 'user' ? 'blue' : 'green'}>
-                      {msg.role === 'user' ? 'You' : 'AI'}
+                      {msg.role === 'user' ? '用户' : 'AI'}
                     </Tag>
                     <span className="message-time">
                       {new Date(msg.created_at).toLocaleTimeString()}
@@ -349,7 +349,7 @@ export default function Sessions() {
                 <Card className="ai-message streaming">
                   <div className="message-header">
                     <Tag color="green">AI</Tag>
-                    <span className="message-time">{isThinking ? '思考中...' : 'Typing...'}</span>
+                    <span className="message-time">{isThinking ? '思考中...' : '输入中...'}</span>
                   </div>
                   {thinking && (
                     <div style={{ marginBottom: streamingContent ? 8 : 0, padding: '8px 12px', background: '#f5f7fa', borderLeft: '3px solid #b37feb', borderRadius: 4, color: '#5c5c5c', fontSize: 13, whiteSpace: 'pre-wrap' }}>
@@ -364,7 +364,7 @@ export default function Sessions() {
             </div>
             <div className="input-container">
               <Input
-                placeholder="Type your question..."
+                placeholder="请输入您的问题..."
                 size="large"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -378,7 +378,7 @@ export default function Sessions() {
                     loading={loading}
                     size="large"
                   >
-                    Send
+                    发送
                   </Button>
                 }
               />

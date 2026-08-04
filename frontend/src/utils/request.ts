@@ -48,21 +48,9 @@ function extractErrorMessage(data: any, fallback = 'Request failed'): string {
   return data.message || fallback
 }
 
-/**
- * Capture the backend TraceId from response headers so it can be surfaced to users
- * for bug reports. Handles both axios headers (plain object) and fetch Headers (.get()).
- */
-function captureTraceId(headers: any): void {
-  if (!headers) return
-  const traceId = headers['x-trace-id'] ?? headers.get?.('X-Trace-Id')
-  if (traceId) lastTraceId = traceId
-}
-
 // Response interceptor
 request.interceptors.response.use(
   (response) => {
-    // Capture the backend TraceId so it can be surfaced to users for bug reports.
-    captureTraceId(response.headers)
     const { data } = response
     if (data.success === false) {
       message.error(data.message || 'Request failed')
@@ -71,8 +59,6 @@ request.interceptors.response.use(
     return data
   },
   (error) => {
-    // Capture TraceId even on failure paths.
-    captureTraceId(error?.response?.headers)
     if (error.response) {
       const { status, data } = error.response
       const onLoginPage = window.location.pathname.startsWith('/login')
@@ -89,9 +75,7 @@ request.interceptors.response.use(
       } else if (status === 429) {
         message.error(extractErrorMessage(data, 'Daily quota exceeded'))
       } else {
-        const msg = extractErrorMessage(data)
-        // 把追踪 ID 一并透出，方便用户反馈时带上，后端据此查全链路。
-        message.error(lastTraceId ? `${msg} (追踪ID: ${lastTraceId})` : msg)
+        message.error(extractErrorMessage(data))
       }
     } else {
       message.error('Network error')
@@ -99,12 +83,6 @@ request.interceptors.response.use(
     return Promise.reject(error)
   }
 )
-
-// Latest TraceId observed from the backend (for copy/paste into the Traces page).
-export let lastTraceId: string | null = null
-export function getLastTraceId(): string | null {
-  return lastTraceId
-}
 
 // SSE streaming request
 export async function postStream(
@@ -122,7 +100,7 @@ export async function postStream(
   const controller = new AbortController()
   const abortSignal = signal ?? controller.signal
   const token = localStorage.getItem('token')
-  
+
   try {
     const response = await fetch(`/api${url}`, {
       method: 'POST',
@@ -135,37 +113,34 @@ export async function postStream(
       signal: abortSignal,
     })
 
-    // Capture TraceId from the SSE response headers (chat streaming path).
-    captureTraceId(response.headers)
-
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
-    
+
     const reader = response.body?.getReader()
     if (!reader) {
       throw new Error('Response body is not readable')
     }
-    
+
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
-    
+
     while (true) {
       const { done, value } = await reader.read()
-      
+
       if (done) {
         break
       }
-      
+
       buffer += decoder.decode(value, { stream: true })
-      
+
       // Split by \n\n to get SSE frames
       const lines = buffer.split('\n\n')
       buffer = lines.pop() || '' // Keep incomplete frame in buffer
-      
+
       for (const line of lines) {
         if (line.trim() === '') continue
-        
+
         // Parse SSE format: data: {...}
         const match = line.match(/^data:\s*(.+)$/)
         if (match) {
@@ -178,7 +153,7 @@ export async function postStream(
         }
       }
     }
-    
+
     onDone?.()
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -186,7 +161,7 @@ export async function postStream(
     }
     onError?.(error as Error)
   }
-  
+
   return controller
 }
 

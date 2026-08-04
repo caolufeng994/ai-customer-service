@@ -15,6 +15,21 @@ interface Document {
   created_at: string
 }
 
+// 后端返回的状态值为英文枚举, 这里映射为中文展示
+const STATUS_TEXT: Record<string, string> = {
+  processing: '处理中',
+  ready: '已就绪',
+  failed: '失败',
+  deleting: '删除中',
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  processing: 'blue',
+  ready: 'green',
+  failed: 'red',
+  deleting: 'orange',
+}
+
 export default function KnowledgeBase() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(false)
@@ -34,7 +49,7 @@ export default function KnowledgeBase() {
 
   const handleUpload = async () => {
     if (fileList.length === 0) {
-      message.warning('Please select a file')
+      message.warning('请先选择文件')
       return
     }
 
@@ -47,7 +62,7 @@ export default function KnowledgeBase() {
       await request.post('/kb/documents', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      message.success('Document uploaded successfully')
+      message.success('文档上传成功')
       setFileList([])
       loadDocuments()
     } catch (error) {
@@ -57,12 +72,14 @@ export default function KnowledgeBase() {
 
   const handleDelete = async (id: number) => {
     Modal.confirm({
-      title: 'Confirm Delete',
-      content: 'Are you sure you want to delete this document?',
+      title: '确认删除',
+      content: '确定要删除该文档吗？删除后其切片将一并从知识库中移除。',
+      okText: '删除',
+      cancelText: '取消',
       onOk: async () => {
         try {
           await request.delete(`/kb/documents/${id}`)
-          message.success('Document deleted successfully')
+          message.success('文档删除成功')
           loadDocuments()
         } catch (error) {
           // Error handled by interceptor
@@ -77,53 +94,47 @@ export default function KnowledgeBase() {
 
   const columns = [
     {
-      title: 'Name',
+      title: '名称',
       dataIndex: 'name',
       key: 'name',
     },
     {
-      title: 'Type',
+      title: '类型',
       dataIndex: 'file_type',
       key: 'file_type',
       width: 100,
     },
     {
-      title: 'Size',
+      title: '大小',
       dataIndex: 'size',
       key: 'size',
       width: 100,
       render: (size: number) => `${(size / 1024).toFixed(1)} KB`,
     },
     {
-      title: 'Chunks',
+      title: '分块数',
       dataIndex: 'chunk_count',
       key: 'chunk_count',
-      width: 80,
+      width: 90,
     },
     {
-      title: 'Status',
+      title: '状态',
       dataIndex: 'status',
       key: 'status',
       width: 120,
-      render: (status: string) => {
-        const colors: Record<string, string> = {
-          processing: 'blue',
-          ready: 'green',
-          failed: 'red',
-          deleting: 'orange',
-        }
-        return <Tag color={colors[status]}>{status}</Tag>
-      },
+      render: (status: string) => (
+        <Tag color={STATUS_COLOR[status]}>{STATUS_TEXT[status] ?? status}</Tag>
+      ),
     },
     {
-      title: 'Created',
+      title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
       render: (date: string) => new Date(date).toLocaleString(),
     },
     {
-      title: 'Actions',
+      title: '操作',
       key: 'actions',
       width: 100,
       render: (_: any, record: Document) => (
@@ -133,7 +144,7 @@ export default function KnowledgeBase() {
           icon={<DeleteOutlined />}
           onClick={() => handleDelete(record.id)}
         >
-          Delete
+          删除
         </Button>
       ),
     },
@@ -143,8 +154,8 @@ export default function KnowledgeBase() {
     <div className="kb-page">
       <div className="kb-header">
         <div>
-          <h2>Knowledge Base</h2>
-          <p className="kb-subtitle">Manage your documents for AI-powered responses</p>
+          <h2>知识库</h2>
+          <p className="kb-subtitle">管理用于 AI 智能回答的文档</p>
         </div>
         <div className="kb-actions">
           <Upload
@@ -154,7 +165,7 @@ export default function KnowledgeBase() {
             accept=".txt,.md,.pdf,.docx"
           >
             <Button icon={<UploadOutlined />} size="large">
-              Select File
+              选择文件
             </Button>
           </Upload>
           <Button
@@ -163,7 +174,7 @@ export default function KnowledgeBase() {
             disabled={fileList.length === 0}
             size="large"
           >
-            Upload
+            上传
           </Button>
         </div>
       </div>
