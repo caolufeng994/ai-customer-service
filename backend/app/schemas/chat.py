@@ -22,11 +22,17 @@ class ChatMessage(BaseModel):
 
 
 class ChatSource(BaseModel):
-    """Retrieval source cited by an assistant answer"""
+    """Retrieval source cited by an assistant answer.
+
+    与答案中的 [K编号] 严格一一对应: k_index=1 即答案里 [K1] 所指代的来源。
+    """
     doc_id: int
     doc_name: Optional[str] = None
     chunk_id: str
+    chunk_index: Optional[int] = None
+    k_index: Optional[int] = None   # 与上下文 [K编号] 对齐
     score: float
+    snippet: Optional[str] = None
 
 
 class ChatSendResponse(BaseModel):
@@ -36,3 +42,5 @@ class ChatSendResponse(BaseModel):
     content: str
     finish_reason: str  # stop | no_context | error
     sources: List[ChatSource] = []
+    grounded: bool = True  # 防编造自检: False=经纠正仍含无法被知识库支撑的内容
+    unsupported_claims: List[str] = []

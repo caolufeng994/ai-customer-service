@@ -51,16 +51,20 @@ class ContextBuilder:
     
     def build_context(self, retrieval_results: List[RetrievalResult]) -> str:
         """
-        Build context from retrieval results with L1-L4 operators
+        Build context from retrieval results with L1-L4 operators.
+        Returns only the context string (for backward compatibility / tests).
+        """
+        context, _ = self._build_context_internal(retrieval_results)
+        return context
 
-        Args:
-            retrieval_results: List of retrieval results
-
-        Returns:
-            Context string with deduplicated chunks
+    def _build_context_internal(self, retrieval_results: List[RetrievalResult]) -> tuple[str, List[RetrievalResult]]:
+        """
+        内部构建: 返回 (context 字符串, 实际进入上下文的块列表 used)。
+        used 的顺序与 [K编号] 严格一一对应 (K1=used[0], K2=used[1] ...),
+        且已应用排序/重排/去重/预算截断。供 build_context_with_sources 做溯源对齐。
         """
         if not retrieval_results:
-            return ""
+            return "", []
 
         # Baseline: sort by score descending (high score first)
         # This ensures "high priority" semantics even when L1 rerank is disabled
@@ -91,8 +95,9 @@ class ContextBuilder:
                 seen_contents.add(result.content)
                 unique_results.append(result)
 
-        # Build context with token budget
+        # Build context with token budget; 同时记录真正被纳入的块 (used)
         context_parts = []
+        used: List[RetrievalResult] = []
         current_chars = 0
 
         for result in unique_results:
@@ -106,13 +111,14 @@ class ContextBuilder:
                 break
 
             context_parts.append(formatted_chunk)
+            used.append(result)
             current_chars += len(formatted_chunk)
 
         # Join with newlines
         context = "\n\n".join(context_parts)
 
         logger.info(f"Built context: {len(context_parts)} chunks, {current_chars} chars")
-        return context
+        return context, used
 
     def _apply_l1_rerank(self, results: List[RetrievalResult]) -> List[RetrievalResult]:
         """
@@ -186,35 +192,29 @@ class ContextBuilder:
             Tuple of (context string, source information list)
 
         Notes:
-            - 每个 doc_id 生成一条 source 条目（与测试约定一致：source 数 = 去重后 doc 数）。
-            - 除保留首个 chunk_id（向后兼容 ChatSource 契约）外，额外用 `chunk_ids`
-              列出该文档命中的全部 chunk，使前端来源与存入 DB 的 citations（全量）一致，
-              解决原先"按 doc_id 去重只留首个 chunk_id"导致 chunk 级引用丢失的问题。
+            - sources 与上下文中的 [K编号] **严格一一对应**: sources[i] 即 [K{i+1}]
+              所指代的召回块(已排序/去重/预算截断后的实际纳入块)。这样前端可把
+              答案里的 [K3] 直接映射到 sources[2], 实现"引用 -> 来源"双向绑定。
+            - 每条 source 携带 k_index / doc_id / doc_name / chunk_id / chunk_index /
+              score / snippet(块内容前 200 字), 足以在 UI 上精确呈现被引用的来源。
         """
         if not retrieval_results:
             return "", []
 
-        # Build context
-        context = self.build_context(retrieval_results)
+        # 内部构建: 拿到真正的上下文与一一对应的 used 块
+        context, used = self._build_context_internal(retrieval_results)
 
-        # 收集每个 doc 命中的全部 chunk_id（按结果出现顺序，即相似度降序）
-        doc_chunk_ids: dict[int, list[str]] = {}
-        for result in retrieval_results:
-            doc_chunk_ids.setdefault(result.doc_id, []).append(result.chunk_id)
-
-        # Extract source information (one entry per doc_id)
+        # 每条 used 块 -> 一个 source, 顺序即 [K编号] 顺序
         sources = []
-        seen_docs = set()
-        for result in retrieval_results:
-            if result.doc_id in seen_docs:
-                continue
-            seen_docs.add(result.doc_id)
+        for idx, result in enumerate(used, start=1):
             sources.append({
+                "k_index": idx,                        # 与上下文 [K编号] 对齐
                 "doc_id": result.doc_id,
                 "doc_name": result.doc_name,
-                "chunk_id": result.chunk_id,           # 首个 chunk（向后兼容）
-                "chunk_ids": doc_chunk_ids[result.doc_id],  # 该文档全部命中 chunk
+                "chunk_id": result.chunk_id,
+                "chunk_index": result.chunk_index,
                 "score": float(result.score),
+                "snippet": result.content[:200],      # 来源片段(块首 200 字)
             })
 
         return context, sources

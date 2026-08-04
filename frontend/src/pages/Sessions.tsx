@@ -1,9 +1,42 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { Layout, List, Input, Button, Card, Tag, message, Modal } from 'antd'
 import { SendOutlined, PlusOutlined, LikeOutlined, DislikeOutlined } from '@ant-design/icons'
 import request, { postStream } from '../utils/request'
 
 const { Header, Content, Sider } = Layout
+
+// 答案中的 [K编号] 引用在召回来源中一一对应: [K3] -> sources[k_index=3]。
+// 这里把 [K编号] 渲染成可点击的高亮标记, 点击后平滑滚动到对应的来源卡片,
+// 实现"引用 -> 来源"的双向绑定, 让用户一眼看清每段结论的出处。
+const K_REF_RE = /\[K(\d+)\]/g
+
+function renderAnswer(content: string): ReactNode {
+  if (!content) return null
+  const parts: React.ReactNode[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  K_REF_RE.lastIndex = 0
+  while ((m = K_REF_RE.exec(content)) !== null) {
+    if (m.index > last) parts.push(content.slice(last, m.index))
+    const idx = Number(m[1])
+    parts.push(
+      <span
+        key={`k-${m.index}`}
+        className="k-ref"
+        title="查看引用来源"
+        onClick={() => {
+          const el = document.getElementById(`source-card-${idx}`)
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }}
+      >
+        [K{idx}]
+      </span>
+    )
+    last = m.index + m[0].length
+  }
+  if (last < content.length) parts.push(content.slice(last))
+  return <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{parts}</p>
+}
 
 interface Message {
   id: number
@@ -12,10 +45,17 @@ interface Message {
   created_at: string
   sources?: Array<{
     doc_id: number
+    doc_name?: string | null
     chunk_id: string
+    chunk_index?: number | null
+    k_index?: number | null
     score: number
-    snippet: string
+    snippet?: string | null
   }>
+  thinking?: string
+  // 防编造自检结果: grounded=false 表示答案经纠正仍含无法被知识库支撑的内容
+  grounded?: boolean
+  unsupported_claims?: string[]
 }
 
 interface Session {
@@ -32,6 +72,10 @@ export default function Sessions() {
   const [loading, setLoading] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
   const streamingRef = useRef('')
+  // Agent 思维链(CoT)实时展示状态:thinkingRef 累积流式思考文本,isThinking 标记思考阶段。
+  const [thinking, setThinking] = useState('')
+  const thinkingRef = useRef('')
+  const [isThinking, setIsThinking] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const [feedbackModalVisible, setFeedbackModalVisible] = useState(false)
@@ -112,6 +156,9 @@ export default function Sessions() {
     setLoading(true)
     setStreamingContent('')
     streamingRef.current = ''
+    setThinking('')
+    thinkingRef.current = ''
+    setIsThinking(false)
 
     try {
       const controller = new AbortController()
@@ -128,8 +175,22 @@ export default function Sessions() {
           onEvent: (event) => {
             if (event.type === 'session_id') {
               setCurrentSession(event.data)
+            } else if (event.type === 'thinking_start') {
+              // 思考状态实时更新:进入思考阶段。
+              setIsThinking(true)
+              thinkingRef.current = ''
+              setThinking('')
+            } else if (event.type === 'thought') {
+              // 思维链内容流式输出:逐块累积。
+              thinkingRef.current += event.data
+              setThinking(thinkingRef.current)
+            } else if (event.type === 'thinking_end') {
+              // 思考完成后的状态切换:退出思考阶段,准备接收正式回答。
+              setIsThinking(false)
             } else if (event.type === 'status') {
               console.log('Status:', event.data)
+              // 进入正式回答阶段(generating)时,确保思考面板已关闭。
+              if (event.data === 'generating') setIsThinking(false)
             } else if (event.type === 'content') {
               streamingRef.current += event.data
               setStreamingContent(streamingRef.current)
@@ -140,10 +201,17 @@ export default function Sessions() {
                 content: streamingRef.current,
                 created_at: new Date().toISOString(),
                 sources: event.data.sources,
+                // 防编造自检结果: grounded=false 时前端展示告警
+                grounded: event.data.grounded,
+                unsupported_claims: event.data.unsupported_claims || [],
+                // 将本次对话的思考链一并持久化,历史记录中也可回看 agent 推理过程。
+                thinking: thinkingRef.current || undefined,
               }
               setMessages((prev) => [...prev, assistantMessage])
               setStreamingContent('')
               streamingRef.current = ''
+              setThinking('')
+              thinkingRef.current = ''
             } else if (event.type === 'error') {
               message.error(event.data || 'An error occurred')
             }
@@ -218,14 +286,39 @@ export default function Sessions() {
                       {new Date(msg.created_at).toLocaleTimeString()}
                     </span>
                   </div>
-                  <p>{msg.content}</p>
+                  {msg.role === 'assistant' && msg.thinking && (
+                    <div style={{ marginBottom: 8, padding: '8px 12px', background: '#f5f7fa', borderLeft: '3px solid #b37feb', borderRadius: 4, color: '#5c5c5c', fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4, color: '#722ed1' }}>💭 思考过程</div>
+                      {msg.thinking}
+                    </div>
+                  )}
+                  {renderAnswer(msg.content)}
+                  {msg.role === 'assistant' && msg.grounded === false && (
+                    <div className="grounded-warning">
+                      <div className="gw-title">⚠️ 部分内容未经知识库佐证</div>
+                      {msg.unsupported_claims && msg.unsupported_claims.length > 0 && (
+                        <ul className="gw-list">
+                          {msg.unsupported_claims.map((c, i) => (
+                            <li key={i}>{c}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="gw-hint">已自动剔除/修正无法被知识库支撑的陈述，仍建议谨慎采信。</div>
+                    </div>
+                  )}
                   {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
                     <div className="message-sources">
-                      <div className="sources-title">引用来源:</div>
+                      <div className="sources-title">引用来源 (点击回答中的 [K编号] 可跳转):</div>
                       {msg.sources.map((source, index) => (
-                        <div key={index} className="source-item">
-                          <Tag color="blue">相关度: {(source.score * 100).toFixed(1)}%</Tag>
-                          <span className="source-snippet">{source.snippet}</span>
+                        <div
+                          key={index}
+                          id={`source-card-${source.k_index ?? index + 1}`}
+                          className="source-item"
+                        >
+                          <Tag color="blue">{source.k_index != null ? `[K${source.k_index}]` : `来源${index + 1}`}</Tag>
+                          <Tag color="geekblue">{(source.score * 100).toFixed(0)}%</Tag>
+                          <span className="source-name">{source.doc_name || `doc ${source.doc_id}`}</span>
+                          <span className="source-snippet" title={source.snippet || ''}>{source.snippet}</span>
                         </div>
                       ))}
                     </div>
@@ -252,13 +345,19 @@ export default function Sessions() {
                   )}
                 </Card>
               ))}
-              {streamingContent && (
+              {(streamingContent || thinking) && (
                 <Card className="ai-message streaming">
                   <div className="message-header">
                     <Tag color="green">AI</Tag>
-                    <span className="message-time">Typing...</span>
+                    <span className="message-time">{isThinking ? '思考中...' : 'Typing...'}</span>
                   </div>
-                  <p>{streamingContent}</p>
+                  {thinking && (
+                    <div style={{ marginBottom: streamingContent ? 8 : 0, padding: '8px 12px', background: '#f5f7fa', borderLeft: '3px solid #b37feb', borderRadius: 4, color: '#5c5c5c', fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4, color: '#722ed1' }}>💭 思考过程</div>
+                      {thinking}
+                    </div>
+                  )}
+                  {streamingContent && <p>{streamingContent}</p>}
                 </Card>
               )}
               <div ref={messagesEndRef} />

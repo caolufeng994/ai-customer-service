@@ -3,7 +3,8 @@ Message model
 """
 from datetime import datetime
 from typing import List
-from sqlalchemy import BigInteger, String, Integer, Text, Enum, DateTime, func, Index, ForeignKey
+from typing import Optional
+from sqlalchemy import BigInteger, String, Integer, Text, Enum, DateTime, Boolean, func, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -23,6 +24,10 @@ class Message(Base):
     token_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     finish_reason: Mapped[str] = mapped_column(String(50), nullable=True)
+    # 防编造自检结果落库: grounded=False 表示答案经纠正后仍含无法被知识库支撑的内容;
+    # unsupported_claims 为被判定为不可靠的具体陈述(JSON 文本)。二者仅对 assistant 消息有意义。
+    grounded: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
+    unsupported_claims: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
 
     # Relationships

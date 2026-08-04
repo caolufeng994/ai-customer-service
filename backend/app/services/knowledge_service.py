@@ -81,8 +81,14 @@ class KnowledgeService:
             text = loader.load(document.file_path, document.file_type)
             char_count = loader.get_char_count(text)
             
-            # Step 2: Split text
-            splitter = TextSplitter(chunk_size=500, chunk_overlap=80)
+            # Step 2: Split text (语义切分:结构边界 + 主题转换点,超长单元回退切分)
+            splitter = TextSplitter(
+                chunk_size=settings.chunk_target_size,
+                chunk_overlap=settings.chunk_overlap,
+                max_chunk_size=settings.max_chunk_size,
+                use_embedding=settings.semantic_use_embedding,
+                topic_threshold=settings.semantic_topic_threshold,
+            )
             chunks = splitter.split_text(text)
             
             # Step 3: Embed chunks

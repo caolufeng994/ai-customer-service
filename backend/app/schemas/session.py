@@ -1,8 +1,9 @@
 """
 Session schemas
 """
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List
+import json
 from datetime import datetime
 
 
@@ -41,8 +42,22 @@ class MessageResponse(BaseModel):
     token_out: int
     latency_ms: int
     finish_reason: Optional[str]
+    grounded: Optional[bool] = None
+    unsupported_claims: Optional[List[str]] = None
     created_at: datetime
-    
+
+    @field_validator("unsupported_claims", mode="before")
+    @classmethod
+    def _parse_unsupported_claims(cls, v):
+        # 落库时为 JSON 文本, 此处还原为列表(list[str]); 已为列表则原样返回。
+        if isinstance(v, str) and v:
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                return []
+        return v
+
     class Config:
         from_attributes = True
 

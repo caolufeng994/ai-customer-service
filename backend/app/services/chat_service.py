@@ -17,6 +17,7 @@ from app.rag.retriever import Retriever
 from app.rag.context_builder import ContextBuilder
 from app.rag.prompt_builder import PromptBuilder
 from app.rag.llm_client import LLMClient
+from app.rag.faithfulness import FaithfulnessChecker
 from app.agent.intent_classifier import IntentClassifier, IntentCategory
 from app.agent.router import route, RouteTarget
 from app.core.exceptions import ValidationError, QuotaExceededError
@@ -189,9 +190,16 @@ class ChatService:
         token_out: int,
         latency_ms: int,
         finish_reason: str,
-        citations: Optional[List[dict]] = None
+        citations: Optional[List[dict]] = None,
+        grounded: Optional[bool] = None,
+        unsupported_claims: Optional[List[str]] = None
     ) -> Message:
-        """Save assistant message to database"""
+        """Save assistant message to database.
+
+        grounded: 防编造自检结果(True/False/None); unsupported_claims: 经判定
+        无法被知识库支撑的具体陈述, 以 JSON 文本落库(前端重载时可还原为列表)。
+        """
+        import json as _json
         message = Message(
             session_id=session_id,
             role="assistant",
@@ -199,7 +207,9 @@ class ChatService:
             token_in=token_in,
             token_out=token_out,
             latency_ms=latency_ms,
-            finish_reason=finish_reason
+            finish_reason=finish_reason,
+            grounded=grounded,
+            unsupported_claims=_json.dumps(unsupported_claims, ensure_ascii=False) if unsupported_claims else None
         )
         db.add(message)
         db.commit()
@@ -221,7 +231,7 @@ class ChatService:
         return message
     
     @staticmethod
-    def _chat_events(db: Session, user_id: int, request: ChatRequest):
+    def _chat_events(db: Session, user_id: int, request: ChatRequest, emit_thinking: bool = True):
         """
         Core RAG pipeline generator shared by both streaming and non-streaming
         endpoints. Yields structured SSE event dicts:
@@ -326,21 +336,78 @@ class ChatService:
             llm_client = get_llm_client()
             full_response = ""
 
+            # —— Agent 思维链(Chain-of-Thought)实时展示 ——
+            # 在正式回答前,先让 agent 把"思考过程"流式推给前端:
+            #   thinking_start (状态:思考中)
+            #   thought       (思维链内容,逐块流式)
+            #   thinking_end  (状态切换:开始回答)
+            # 思考阶段由一次轻量 LLM 推理调用驱动,失败仅跳过展示、不阻断主链路。
+            # emit_thinking=False 用于非流式 /send 路径,避免额外 LLM 开销。
+            if emit_thinking and settings.enable_thinking_display:
+                try:
+                    with span(
+                        "agent_think",
+                        attributes={"intent": intent_category.value, "target": route_target.value},
+                    ) as s_think:
+                        for think_event in ChatService._stream_thinking(
+                            llm_client, request.message, context, intent_category
+                        ):
+                            yield think_event
+                        s_think.set_attribute("emitted", "true")
+                except Exception as think_err:
+                    logger.warning(f"CoT thinking phase failed (degraded to direct answer): {think_err}")
+
             yield {"type": "status", "data": "generating"}
 
+            # —— 生成回答(先缓冲, 再做防编造自检, 最后才把"已验证"内容推给前端) ——
+            # 采用"拦截式": 用户看到的回答一定经过忠实度校验/纠正, 避免先显编造再撤回。
+            raw_chunks = []
             with span("llm_generate", attributes={"model": settings.dashscope_model or "unknown"}) as s_llm:
                 try:
                     for chunk in llm_client.chat_stream(messages, temperature=0.7, max_tokens=1000):
-                        full_response += chunk
-                        yield {"type": "content", "data": chunk}
-                    s_llm.set_attribute("finish_reason", finish_reason)
+                        raw_chunks.append(chunk)
+                    full_response = "".join(raw_chunks)
+                    finish_reason = "stop"
                 except Exception as llm_error:
                     logger.error(f"LLM generation failed: {llm_error}")
                     s_llm.set_status_error(str(llm_error))
-                    # Graceful degradation: return error message instead of raising
                     full_response = "抱歉，服务暂时不可用，请稍后重试。"
                     finish_reason = "error"
-                    yield {"type": "content", "data": full_response}
+
+            # —— 防编造自检 (Faithfulness Gate) ——
+            # 在把答案发给用户前, 比对"回答"与"召回上下文"的事实一致性;
+            # 不忠实则触发基于 [K] 内容的自我纠正并复检, 仍不通过则标记 grounded=False。
+            grounded = True
+            unsupported_claims: list = []
+            if context and settings.enable_faithfulness_check and finish_reason == "stop":
+                try:
+                    with span("faithfulness_check") as s_f:
+                        checker = FaithfulnessChecker(llm_client, temperature=settings.faithfulness_temperature)
+                        verdict = checker.check(full_response, context)
+                        s_f.set_attribute("faithful", str(verdict.is_faithful))
+                        if not verdict.is_faithful:
+                            candidate = full_response
+                            for _ in range(settings.faithfulness_max_correct):
+                                fixed = checker.correct(candidate, context, verdict.unsupported_claims)
+                                if not fixed:
+                                    break
+                                recheck = checker.check(fixed, context)
+                                s_f.set_attribute("recheck_faithful", str(recheck.is_faithful))
+                                candidate = fixed
+                                if recheck.is_faithful:
+                                    break
+                            final_verdict = checker.check(candidate, context)
+                            if not final_verdict.is_faithful:
+                                grounded = False
+                                unsupported_claims = verdict.unsupported_claims
+                            # 不论是否完全忠实, 都用"最后一次纠正版"(至少已剔除被标记的陈述)
+                            full_response = candidate
+                except Exception as fe:
+                    logger.warning(f"Faithfulness gate error (degraded to original answer): {fe}")
+
+            # 把最终(已验证/已纠正)回答流式推给前端, 保留逐行流式观感
+            for chunk in ChatService._stream_verified_text(full_response):
+                yield {"type": "content", "data": chunk}
 
             latency_ms = int((time.time() - start_time) * 1000)
 
@@ -376,7 +443,9 @@ class ChatService:
                 token_out=token_out,
                 latency_ms=latency_ms,
                 finish_reason=finish_reason,
-                citations=citations
+                citations=citations,
+                grounded=grounded,
+                unsupported_claims=unsupported_claims
             )
 
             # Quota was already incremented atomically by the API-layer check_quota
@@ -392,6 +461,10 @@ class ChatService:
                 "message_id": assistant_message.id,
                 "finish_reason": finish_reason,
                 "sources": sources,
+                # 防编造自检结果: grounded=False 表示答案经纠正后仍含无法被知识库
+                # 支撑的内容, 前端应展示告警并列出具体陈述, 提示用户谨慎采信。
+                "grounded": grounded,
+                "unsupported_claims": unsupported_claims,
             }
 
             # Generate follow-up suggestions (lightweight)
@@ -416,6 +489,74 @@ class ChatService:
         except Exception as e:
             logger.error(f"Chat pipeline failed: {e}")
             yield {"type": "error", "data": str(e)}
+
+    @staticmethod
+    def _stream_thinking(
+        llm_client,
+        query: str,
+        context: str,
+        intent_category,
+    ):
+        """
+        Agent 思维链(Chain-of-Thought)流式生成器。
+
+        产出 SSE 事件流(与 _chat_events 其它事件格式一致):
+            {"type": "thinking_start", "data": {"status": "thinking"}}
+            {"type": "thought",        "data": "<chunk>"}   (可能多个)
+            {"type": "thinking_end",   "data": {"status": "answering"}}
+
+        思考内容由一次轻量 LLM 推理调用驱动,反映 agent 对「用户意图 → 知识库
+        检索结果 → 回答规划」的真实推理过程,而非硬编码文案。
+
+        契约:本生成器**绝不向外抛异常**——任何失败都只记录日志并正常发出
+        thinking_end,由 _chat_events 的调用方兜底,确保"思考失败"最多只是少一段
+        展示,绝不阻断正式回答。
+        """
+        yield {"type": "thinking_start", "data": {"status": "thinking"}}
+
+        system_prompt = (
+            "你是一个智能客服助手的内部「思考过程」生成器。请根据用户的问题"
+            "以及(可选的)知识库检索结果,用简洁的中文逐步阐述你的内部推理过程,"
+            "例如:1) 理解用户意图;2) 判断知识库中是否存在相关信息;3) 规划回答要点。"
+            "只输出推理过程,不要给出最终答案。控制在 3-5 句话,语言自然、口语化。"
+        )
+        user_content = (
+            f"用户问题：{query}\n"
+            f"知识库内容：{context if context else '（无相关检索结果）'}"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            for chunk in llm_client.chat_stream(
+                messages, temperature=0.5, max_tokens=settings.thinking_max_tokens
+            ):
+                if chunk:
+                    yield {"type": "thought", "data": chunk}
+        except Exception as e:
+            logger.warning(f"Thinking stream interrupted: {e}")
+            # 不重新抛出:思考中断即止,直接进入 answering 状态。
+
+        yield {"type": "thinking_end", "data": {"status": "answering"}}
+
+    @staticmethod
+    def _stream_verified_text(text: str):
+        """
+        把"已通过防编造自检"的回答切分为流式块(按换行 + 超长行再切分),
+        用于模拟逐字流式推送, 兼顾"拦截式校验"与"流式观感"。
+        """
+        if not text:
+            return
+        lines = text.split("\n")
+        for idx, line in enumerate(lines):
+            if line:
+                # 超长行按字符再切分, 避免单块过大
+                for i in range(0, len(line), 80):
+                    yield line[i:i + 80]
+            if idx != len(lines) - 1:
+                yield "\n"
 
     @staticmethod
     def _generate_followup_suggestions(
@@ -481,7 +622,7 @@ class ChatService:
         session_id = None
         done_data = None
 
-        for event in ChatService._chat_events(db, user_id, request):
+        for event in ChatService._chat_events(db, user_id, request, emit_thinking=False):
             etype = event.get("type")
             if etype == "session_id":
                 session_id = event["data"]
@@ -503,4 +644,7 @@ class ChatService:
             "content": full_response,
             "finish_reason": done_data.get("finish_reason", "error"),
             "sources": done_data.get("sources", []),
+            # 正常 done 事件必带 grounded(bool); 错误路径无 done 数据时缺省 True(无答案则不告警)。
+            "grounded": done_data.get("grounded", True),
+            "unsupported_claims": done_data.get("unsupported_claims", []),
         }

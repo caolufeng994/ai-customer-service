@@ -106,6 +106,20 @@ class Settings(BaseSettings):
     global_rate_limit: str = "100/minute"  # Global RPS limit
     ip_rate_limit: str = "30/minute"  # Per-IP RPS limit
 
+    # 文档切分策略:语义切分(替代固定长度递归切分)
+    # 基于结构边界(标题/章节/段落)与主题转换点断块,仅对超长单元回退到按标点/字符切分。
+    semantic_chunking: bool = True
+    # 目标分块长度(软上限):尽量在语义边界处停,不超过此值。
+    chunk_target_size: int = 500
+    # 硬上限:任何分块不得超过该长度,超出部分走回退切分。须 >= chunk_target_size。
+    max_chunk_size: int = 600
+    # 回退切分时的块间重叠(仅超长单元回退时生效,语义合并阶段不引入重叠避免重复)。
+    chunk_overlap: int = 80
+    # 是否启用 embedding 主题转换点检测(更准,但每次入库额外产生 embedding 调用)。默认关闭。
+    semantic_use_embedding: bool = False
+    # embedding 模式下,相邻句相似度低于该值视为主题切换(断块)。
+    semantic_topic_threshold: float = 0.5
+
     # Reranker Configuration
     enable_reranker: bool = False  # Enable reranking for better retrieval
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # Reranker model
@@ -114,8 +128,26 @@ class Settings(BaseSettings):
     # Follow-up Suggestions
     enable_followup_suggestions: bool = False  # Enable follow-up question suggestions
 
-    # Citation Verification
-    enable_citation_verification: bool = True  # Enable citation verification to prevent hallucinations
+    # Citation Verification (弱校验: 仅检查 [K编号] 是否在 1..N 范围, 不校验事实一致性)
+    enable_citation_verification: bool = True  # Enable citation [K编号] range check
+
+    # 防编造自检 (Faithfulness Gate)
+    # 答案生成后, 用 LLM-as-Judge 比对"回答"与"召回上下文"的事实一致性,
+    # 检测编造/矛盾/无关内容; 若不满足忠实度, 触发一次基于 [K] 内容的自我纠正并复检。
+    # 该机制是真正的"防编造拦截", 区别于上面仅做编号范围校验的 citation_verification。
+    enable_faithfulness_check: bool = True
+    # 自检判定所用的采样温度(低温度=更稳定一致)
+    faithfulness_temperature: float = 0.2
+    # 自我纠正的最大次数(默认 1 次: 纠正一次后复检, 仍不通过则标记 grounded=False 放行)
+    faithfulness_max_correct: int = 1
+
+    # Agent 思维链(Chain-of-Thought)实时展示
+    # 开启后,流式对话会在正式回答前先展示 agent 的"思考过程":
+    # thinking_start(思考状态) -> thought(思维链内容流式输出) -> thinking_end(状态切换) -> 正式回答。
+    # 思考阶段由一次轻量 LLM 推理调用驱动,失败会自动降级(跳过思考直接回答),不阻断主链路。
+    enable_thinking_display: bool = True
+    # 思维链生成的最大 token 数(控制思考长度,避免过长拖慢首字)。
+    thinking_max_tokens: int = 350
     
     class Config:
         env_file = ".env"

@@ -36,20 +36,36 @@ class DocumentLoader:
 
     @staticmethod
     def _read_text_file(file_path: str, label: str) -> str:
-        """按 utf-8 读取纯文本,失败回退 gbk(兼容 Windows 导出的文档)。"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except UnicodeDecodeError:
+        """
+        按 utf-8 读取纯文本。
+
+        编码回退链:utf-8 -> gbk -> latin-1。
+        - utf-8 为主编码(满足跨平台一致性,避免 Windows 默认 GBK 误判)。
+        - gbk 兼容 Windows 记事本另存的 ANSI/GBK 文档。
+        - latin-1 为安全兜底:它把每个字节(0x00-0xFF)都映射到一个码位,
+          永远不会再抛出 UnicodeDecodeError,从而保证即便遇到损坏/混合编码
+          的文件(例如同时非 utf-8 也非 gbk 的文本)也不会让服务崩溃,
+          而是以可接受(可能乱码但可读)的内容继续处理。
+        显式指定 encoding 而非依赖平台默认,是修复启动期
+        ``UnicodeDecodeError: 'gbk' codec can't decode ...`` 的关键。
+        """
+        last_err: Optional[Exception] = None
+        for enc in ("utf-8", "gbk", "latin-1"):
             try:
-                with open(file_path, 'r', encoding='gbk') as f:
+                with open(file_path, 'r', encoding=enc) as f:
                     return f.read()
-            except Exception as e:
-                logger.error(f"Failed to load {label} file {file_path}: {e}")
-                raise
-        except Exception as e:
-            logger.error(f"Failed to load {label} file {file_path}: {e}")
-            raise
+            except UnicodeDecodeError as e:
+                # 仅编码类错误才尝试下一个编码;其它异常直接上抛。
+                last_err = e
+                logger.debug(
+                    f"Read {label} file {file_path} as {enc} failed: {e}; trying next encoding"
+                )
+                continue
+        # 理论上不会到达此处(latin-1 必成功),但保持防御性。
+        logger.error(f"Failed to load {label} file {file_path}: {last_err}")
+        raise last_err if last_err else RuntimeError(
+            f"Unable to read {label} file {file_path}"
+        )
 
     @staticmethod
     def load_txt(file_path: str) -> str:
