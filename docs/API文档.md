@@ -388,7 +388,7 @@ Content-Type: multipart/form-data
 **请求参数**：
 - `file`: 文件对象（multipart/form-data）
 
-**支持格式**：`txt`、`md`、`pdf`
+**支持格式**：`txt`、`md`、`pdf`、`docx`（与 `loader.ALLOWED_UPLOAD_EXTS` 一致）
 
 **文件大小限制**：10 MB
 
@@ -583,23 +583,42 @@ data: {"type":"session_id","data":1}
 
 data: {"type":"status","data":"generating"}
 
+data: {"type":"thinking_start","data":{"status":"thinking"}}
+
+data: {"type":"thought","data":"需要从知识库中提取与退款直接相关的内容…"}
+
+data: {"type":"thought","data":"知识库中明确列出了三种可申请退款的情形…"}
+
+data: {"type":"thinking_end","data":{"status":"answering"}}
+
 data: {"type":"content","data":"我"}
 
 data: {"type":"content","data":"们的"}
 
 ...
 
-data: {"type":"done","data":{"message_id":2,"finish_reason":"stop","sources":[{"doc_id":1,"doc_name":"产品介绍.md","chunk_id":"doc_1_chunk_0","score":0.85}]}}
+data: {"type":"done","data":{"message_id":2,"finish_reason":"stop","sources":[{"k_index":1,"doc_id":1,"doc_name":"产品介绍.md","chunk_id":"doc_1_chunk_0","score":0.85,"snippet":"…被引用的原文内容…"}],"grounded":true,"unsupported_claims":[],"suggestions":["退款一般多久到账？","企业转账退款有什么不同？"]}}
 ```
 
-**SSE 事件类型**：
-- `session_id`: 会话 ID
-- `status`: 状态（如 `generating`）
-- `content`: 内容片段（逐片推送）
-- `done`: 完成，携带 `message_id`、`finish_reason`、`sources`（引用来源）
-- `error`: 错误信息
+**SSE 事件类型（完整）**：
+- `session_id`: 会话 ID（首个事件）
+- `status`: 状态标记（如 `generating`）
+- `thinking_start`: 思维链开始（`{"status":"thinking"}`）—— 意图识别与检索完成后，正式回答前先推送
+- `thought`: 思维链内容片段（逐片推送，由 LLM 基于真实检索上下文实时生成，非硬编码）
+- `thinking_end`: 思维链结束（`{"status":"answering"}`）
+- `content`: 正式回答内容片段（逐片推送，逐字流式）
+- `done`: 完成，携带以下字段：
+  - `message_id`: 助手消息 ID
+  - `finish_reason`: 结束原因（`stop` / `no_context` / `error`）
+  - `sources`: 引用来源列表，每条含 `k_index`（对应上下文 `[K编号]`）、`doc_id`、`doc_name`、`chunk_id`、`score`、`snippet`（被引用的完整原文）
+  - `grounded`: 防编造自检结果（`true`=答案被知识库支撑；`false`=仍存在无法支撑的内容，前端展示告警）
+  - `unsupported_claims`: 自检判定为不可靠的具体陈述列表（`grounded=false` 时非空）
+  - `suggestions`（可选）: 追问引导建议列表（当 `finish_reason=stop` 且有上下文且开启 `enable_followup_suggestions` 时返回）
+- `error`: 错误信息（含异常描述）
 
-> 关于 SSE 协议与需求规格的增强项（如 `meta` 事件、`suggestion` 追问建议、`citation` 在正文前推送等），当前代码未实现，按用户确认延后处理，详见文末「已知差距」。
+> 事件顺序：`session_id` → `status` →（`thinking_start` → 若干 `thought` → `thinking_end`）→ 若干 `content` → `done`。思维链为可观察的"思考过程"，任一环节失败仅跳过该环节、不阻断正式回答（fail-open）。
+
+> 关于 SSE 协议与需求规格的增强项：追问建议（`suggestions`）**已实现**并通过 `done` 事件返回（见上）；`meta` 事件、引用在正文前预推送等其余增强项当前未实现，详见文末「已知差距」。
 
 **常见错误**：
 - `401` + `detail.code = AUTH_ERROR`：未认证。
