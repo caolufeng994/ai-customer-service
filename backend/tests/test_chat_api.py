@@ -15,7 +15,7 @@ def _login(client):
 
 def _mock_stream(monkeypatch, chunks, quota_ok=True):
     """mock 掉 chat_stream 与 quota 检查。"""
-    async def fake_chat_stream(db, user_id, request):
+    async def fake_chat_stream(user_id, request):
         for c in chunks:
             yield c
 
