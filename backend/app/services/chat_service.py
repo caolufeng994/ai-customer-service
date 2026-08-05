@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import time
 import json
+import asyncio
+import threading
 from functools import lru_cache
 from app.models.session import Session as SessionModel
 from app.models.message import Message
@@ -21,7 +23,8 @@ from app.rag.faithfulness import FaithfulnessChecker
 from app.agent.intent_classifier import IntentClassifier, IntentCategory
 from app.agent.router import route, RouteTarget
 from app.core.exceptions import ValidationError, QuotaExceededError
-from app.core.tracing import span
+from app.core.tracing import span, get_current_trace_id, set_current_trace_id
+from app.database import SessionLocal
 from app.config import settings
 import logging
 
@@ -297,6 +300,26 @@ class ChatService:
         context = ""
         sources: list = []
 
+        # —— Agent 思维链(Chain-of-Thought)实时展示（提前到检索前） ——
+        # 在检索开始前先展示思考过程，让用户立即看到"思考中"状态，提升体验
+        # 思考阶段由一次轻量 LLM 推理调用驱动，失败仅跳过展示、不阻断主链路
+        # emit_thinking=False 用于非流式 /send 路径，避免额外 LLM 开销
+        if emit_thinking and settings.enable_thinking_display:
+            try:
+                with span(
+                    "agent_think",
+                    attributes={"intent": intent_category.value, "target": route_target.value},
+                ) as s_think:
+                    for think_event in ChatService._stream_thinking(
+                        None, request.message, "", intent_category
+                    ):
+                        yield think_event
+                    s_think.set_attribute("emitted", "true")
+            except Exception as think_err:
+                logger.warning(f"CoT thinking phase failed (degraded to direct answer): {think_err}")
+
+        yield {"type": "status", "data": "generating"}
+
         try:
             prompt_builder = get_prompt_builder()
 
@@ -341,29 +364,6 @@ class ChatService:
             # Stream LLM response (use singleton)
             llm_client = get_llm_client()
             full_response = ""
-
-            # —— Agent 思维链(Chain-of-Thought)实时展示 ——
-            # 在正式回答前,先让 agent 把"思考过程"流式推给前端:
-            #   thinking_start (状态:思考中)
-            #   thought       (思维链内容,逐块流式)
-            #   thinking_end  (状态切换:开始回答)
-            # 思考阶段由一次轻量 LLM 推理调用驱动,失败仅跳过展示、不阻断主链路。
-            # emit_thinking=False 用于非流式 /send 路径,避免额外 LLM 开销。
-            if emit_thinking and settings.enable_thinking_display:
-                try:
-                    with span(
-                        "agent_think",
-                        attributes={"intent": intent_category.value, "target": route_target.value},
-                    ) as s_think:
-                        for think_event in ChatService._stream_thinking(
-                            llm_client, request.message, context, intent_category
-                        ):
-                            yield think_event
-                        s_think.set_attribute("emitted", "true")
-                except Exception as think_err:
-                    logger.warning(f"CoT thinking phase failed (degraded to direct answer): {think_err}")
-
-            yield {"type": "status", "data": "generating"}
 
             # —— 兜底话术(标准、固定、零编造) ——
             # 仅当 RAG 检索为空(no_context, 即知识类意图但知识库无相关片段)时, 不注入任何
@@ -552,6 +552,24 @@ class ChatService:
         """
         yield {"type": "thinking_start", "data": {"status": "thinking"}}
 
+        # 如果没有 llm_client（提前调用时），返回简化的思考过程
+        if llm_client is None:
+            # 简化的思考过程，基于意图分类
+            intent_desc = {
+                "PRODUCT_CONSULT": "产品咨询",
+                "AFTER_SALE": "售后服务",
+                "ORDER_QUERY": "订单查询",
+                "COMPLAINT": "投诉建议",
+                "CHAT": "闲聊",
+                "FALLBACK": "未知意图"
+            }.get(intent_category.value if intent_category else "FALLBACK", "未知意图")
+
+            simple_thought = f"正在分析用户问题：{query}\n识别到意图：{intent_desc}\n准备检索相关知识库内容..."
+            for chunk in simple_thought:
+                yield {"type": "thought", "data": chunk}
+            yield {"type": "thinking_end", "data": {"status": "answering"}}
+            return
+
         system_prompt = (
             "你是一个智能客服助手的内部「思考过程」生成器。请根据用户的问题"
             "以及(可选的)知识库检索结果,用简洁的中文逐步阐述你的内部推理过程,"
@@ -628,18 +646,82 @@ class ChatService:
             return []
 
     @staticmethod
-    async def chat_stream(db: Session, user_id: int, request: ChatRequest):
+    async def chat_stream(user_id: int, request: ChatRequest):
         """
         Stream chat response using RAG pipeline.
         Returns an async generator that yields SSE-formatted strings
-        (``data: {json}\\n\\n``) consumed by FastAPI StreamingResponse.
+        (``data: {json}\n\n``) consumed by FastAPI StreamingResponse.
 
-        注意: 不再在 content 事件间人为 sleep。LLM 本身即以 token 粒度产出
-        (framework/llm.py 的 chat_stream 逐块 yield delta.content), 由 _chat_events
-        直接实时下发给前端, 任何额外延迟只会拖慢真实流式观感。
+        关键修复(为什么之前"没有流式输出"):
+        原实现是 `async def` 内用普通 `for` 迭代同步生成器 `_chat_events`, 而
+        `_chat_events` 内部通过**同步阻塞 I/O** 调用 LLM
+        (`for chunk in llm_client.chat_stream(...)`)。阻塞 I/O 一旦开始(一次生成
+        动辄数秒), 事件循环被冻结, `StreamingResponse` 排队等待的 socket 写出一直
+        得不到执行, 直到整段生成结束才一次性 flush —— 表现为整段响应在末尾瞬时到达,
+        根本没有逐块推流。
+
+        这里用「工作线程 + asyncio.Queue」桥接: 把阻塞的同步生成器放到独立线程跑,
+        主事件循环只负责 `await queue.get()` 然后 `yield`。每产生一个事件就能立即
+        flush 给前端(session_id / 思考过程 / 正文逐块到达), 事件循环不会再被冻结。
         """
-        for event in ChatService._chat_events(db, user_id, request):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        loop = asyncio.get_running_loop()
+        queue: "asyncio.Queue" = asyncio.Queue(maxsize=256)
+        sentinel = object()
+        stop = threading.Event()
+
+        # 捕获请求线程的 trace_id, 在工作线程中还原, 保证链路追踪可关联到同一次请求。
+        parent_trace_id = get_current_trace_id()
+
+        def _produce():
+            # 工作线程内使用独立 DB session(SQLAlchemy session 非线程安全,
+            # 不能复用请求线程的那个 db)。
+            if parent_trace_id:
+                set_current_trace_id(parent_trace_id)
+            db = SessionLocal()
+            try:
+                for event in ChatService._chat_events(db, user_id, request):
+                    if stop.is_set():
+                        break
+                    try:
+                        # 跨线程把事件推给事件循环侧的队列; 带超时避免客户端断开后
+                        # 生产者无限阻塞(背压由 maxsize + 超时共同保证)。
+                        asyncio.run_coroutine_threadsafe(
+                            queue.put(event), loop
+                        ).result(timeout=30)
+                    except Exception:
+                        break
+            except Exception as exc:  # 兜底: 以 error 事件上报, 避免静默断流
+                logger.error("[chat_stream] pipeline error: %s", exc, exc_info=True)
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put({"type": "error", "data": str(exc)}), loop
+                    ).result(timeout=5)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(sentinel), loop
+                    ).result(timeout=5)
+                except Exception:
+                    pass
+
+        worker = threading.Thread(target=_produce, daemon=True)
+        worker.start()
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        finally:
+            # 客户端断开时尽快让工作线程退出, 释放其 DB 连接。
+            stop.set()
 
     @staticmethod
     def chat_send(db: Session, user_id: int, request: ChatRequest) -> dict:

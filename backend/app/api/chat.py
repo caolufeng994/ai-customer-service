@@ -39,7 +39,8 @@ async def _safe_stream(db: Session, user_id: int, payload: ChatRequest):
     ``db.close()`` from FastAPI's teardown is a harmless no-op.
     """
     try:
-        async for chunk in ChatService.chat_stream(db, user_id, payload):
+        # chat_stream 内部在独立工作线程自建 DB session, 此处仅负责关闭请求线程的 db
+        async for chunk in ChatService.chat_stream(user_id, payload):
             yield chunk
     finally:
         db.close()

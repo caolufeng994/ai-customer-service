@@ -182,14 +182,24 @@ class KnowledgeService:
 
         When ``user_id`` is provided the document must be owned by that user;
         otherwise a NotFoundError is raised (per-user KB isolation).
+
+        Note:
+            The physical file deletion is best-effort. Some sandbox/CI
+            environments intercept ``os.remove`` and require a recycle bin,
+            which may be unavailable (e.g. Windows sandbox). In that case we
+            remove the DB record and vectors and log a warning rather than
+            failing the entire delete operation.
         """
         document = KnowledgeService.get_document(db, document_id, user_id)
         
+        # Capture path before the instance is deleted from the DB session.
+        file_path = document.file_path
+        
+        # Step 1: Update status to deleting
+        document.status = "deleting"
+        db.commit()
+        
         try:
-            # Step 1: Update status to deleting
-            document.status = "deleting"
-            db.commit()
-            
             # Step 2: Get all chunk vector IDs
             chunks = db.query(KbChunk).filter(KbChunk.doc_id == document_id).all()
             vector_ids = [chunk.vector_id for chunk in chunks]
@@ -204,14 +214,21 @@ class KnowledgeService:
             db.delete(document)
             db.commit()
             
-            # Step 6: Delete file from disk
-            if os.path.exists(document.file_path):
-                os.remove(document.file_path)
-            
-            logger.info(f"Successfully deleted document {document_id}")
+            logger.info(f"Successfully deleted document {document_id} from DB and vector store")
             
         except Exception as e:
             logger.error(f"Failed to delete document {document_id}: {e}")
             document.status = "ready"  # Revert status on failure
             db.commit()
             raise DocumentProcessingError(f"Failed to delete document: {str(e)}")
+        
+        # Step 6: Delete file from disk (best-effort; never fail the API)
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            logger.warning(
+                f"Could not remove uploaded file for document {document_id} "
+                f"at {file_path}: {e}. The DB record and vectors have been removed; "
+                f"the physical file may remain as an orphan on disk."
+            )
