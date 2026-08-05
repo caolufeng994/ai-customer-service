@@ -300,23 +300,11 @@ class ChatService:
         context = ""
         sources: list = []
 
-        # —— Agent 思维链(Chain-of-Thought)实时展示（提前到检索前） ——
-        # 在检索开始前先展示思考过程，让用户立即看到"思考中"状态，提升体验
-        # 思考阶段由一次轻量 LLM 推理调用驱动，失败仅跳过展示、不阻断主链路
-        # emit_thinking=False 用于非流式 /send 路径，避免额外 LLM 开销
+        # —— Agent 思维链(CoT)实时展示:先发出"思考中"状态 ——
+        # 在检索开始前立即让用户看到"思考中",后续再用真实检索上下文生成思维链。
+        # emit_thinking=False 用于非流式 /send 路径,避免额外 LLM 开销。
         if emit_thinking and settings.enable_thinking_display:
-            try:
-                with span(
-                    "agent_think",
-                    attributes={"intent": intent_category.value, "target": route_target.value},
-                ) as s_think:
-                    for think_event in ChatService._stream_thinking(
-                        None, request.message, "", intent_category
-                    ):
-                        yield think_event
-                    s_think.set_attribute("emitted", "true")
-            except Exception as think_err:
-                logger.warning(f"CoT thinking phase failed (degraded to direct answer): {think_err}")
+            yield {"type": "thinking_start", "data": {"status": "thinking"}}
 
         yield {"type": "status", "data": "generating"}
 
@@ -364,6 +352,25 @@ class ChatService:
             # Stream LLM response (use singleton)
             llm_client = get_llm_client()
             full_response = ""
+
+            # —— Agent 思维链(CoT)真实流式生成 ——
+            # 在检索/路由决策完成后,用真实上下文驱动一次轻量 LLM 推理,
+            # 把内部推理过程以 thought 事件流式推给前端,解决"思维链没内容"的问题。
+            # 失败仅跳过展示,不阻断正式回答。
+            if emit_thinking and settings.enable_thinking_display:
+                try:
+                    with span(
+                        "agent_think",
+                        attributes={"intent": intent_category.value, "target": route_target.value},
+                    ) as s_think:
+                        for think_event in ChatService._stream_thinking(
+                            llm_client, request.message, context, intent_category
+                        ):
+                            yield think_event
+                        s_think.set_attribute("emitted", "true")
+                except Exception as think_err:
+                    logger.warning(f"CoT thinking phase failed (degraded): {think_err}")
+                    yield {"type": "thinking_end", "data": {"status": "answering"}}
 
             # —— 兜底话术(标准、固定、零编造) ——
             # 仅当 RAG 检索为空(no_context, 即知识类意图但知识库无相关片段)时, 不注入任何

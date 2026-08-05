@@ -223,6 +223,8 @@ export default function Sessions() {
     setThinking('')
     thinkingRef.current = ''
     setIsThinking(false)
+    // 发送消息后立即滚动到底部，确保能看到思考过程
+    setTimeout(() => scrollToBottom(), 100)
 
     try {
       const controller = new AbortController()
@@ -244,6 +246,8 @@ export default function Sessions() {
               setIsThinking(true)
               thinkingRef.current = ''
               setThinking('')
+              // 思考开始时滚动到底部，确保用户能看到思考过程
+              setTimeout(() => scrollToBottom(), 100)
             } else if (event.type === 'thought') {
               // 思维链内容流式输出:逐块累积。
               thinkingRef.current += event.data
