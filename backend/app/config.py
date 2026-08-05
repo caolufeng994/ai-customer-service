@@ -66,8 +66,9 @@ class Settings(BaseSettings):
 
     # Knowledge base initialization
     # 设为 true 时，服务启动会自动把 seed_docs 向量化（幂等，已入库的会跳过），
-    # 实现题目要求的"初始化即可测问答"。默认 false，避免每次启动都触发网络 embedding。
-    auto_init_kb: bool = False
+    # 实现题目要求的"初始化即可测问答"。默认 true，确保 clone 后启动即可直接问答；
+    # 若希望避免每次启动触发网络 embedding，可改为 false 并手动运行 backend/init_kb.py。
+    auto_init_kb: bool = True
     
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
@@ -120,7 +121,9 @@ class Settings(BaseSettings):
     semantic_topic_threshold: float = 0.5
 
     # Reranker Configuration
-    enable_reranker: bool = False  # Enable reranking for better retrieval
+    # 默认开启 L1 重排（score fusion），提升大规模召回下的相关块排序质量；
+    # 若 FlagEmbedding/bge-reranker-v2-m3 不可用，retriever 会自动降级为不重排（见 retriever.py）。
+    enable_reranker: bool = True  # Enable reranking for better retrieval
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # Reranker model
     retrieval_recall_k: int = 20  # Recall top-k before reranking
 

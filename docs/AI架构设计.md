@@ -465,7 +465,7 @@ sequenceDiagram
 - RAG Core层：AI核心
 - Infra层：基础设施
 
-> 扩展骨架说明：`app/framework/` 下除 `llm.py`（LLM 抽象，已被 `rag/llm_client.py` 使用）、`memory.py`（QueryRewriter，已被对话主链路使用）外，`agent.py` / `chain.py` / `planner.py` / `tools.py` 为预留的多 Agent / 工具调用扩展骨架，当前对话主链路未启用。
+> 扩展骨架说明：`app/framework/` 包保留 `llm.py`（LLM 抽象，已被 `rag/llm_client.py` 使用）、`memory.py`（QueryRewriter，已被对话主链路使用）两个生产基础抽象。早期版本另含 `agent.py` / `chain.py` / `planner.py` / `tools.py` 等多 Agent / 工具调用扩展骨架（未接入生产主流程），为契合"代码结构清晰"要求已移除；其对应能力由 `app/rag/`、`app/agent/`、`app/services/` 下的生产代码直接承载。
 
 ## 监控指标
 
