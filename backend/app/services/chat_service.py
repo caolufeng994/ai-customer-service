@@ -469,10 +469,12 @@ class ChatService:
             token_in = len(context) // 4 if context else 0
             token_out = len(full_response) // 4
 
-            # Build citations with snippets (truncate to 120 chars)
+            # Build citations with full original-snippet text.
+            # 保留完整原文片段：之前截断到 120 字会导致历史回看时原文引用信息丢失，
+            # 违反"输出内容准确反映来源"的要求；此处改为保留完整 chunk 原文。
             citations = []
             for result in retrieval_results:
-                snippet = result.content[:120]  # Truncate snippet to 120 characters
+                snippet = result.content  # 完整原文片段，不再截断
                 citations.append({
                     "doc_id": result.doc_id,
                     "chunk_id": result.chunk_id,

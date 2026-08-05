@@ -19,8 +19,18 @@ function citedKIndices(content: string): Set<number> {
   return set
 }
 
-function renderAnswer(content: string): ReactNode {
+function renderAnswer(
+  content: string,
+  sources?: Array<{ k_index?: number | null; snippet?: string | null }>
+): ReactNode {
   if (!content) return null
+  // 建立 [K编号] -> 原文片段 映射, 用于给引用标记加悬停提示, 让用户随时查看原文。
+  const kIndexToSnippet: Record<number, string> = {}
+  if (sources) {
+    for (const s of sources) {
+      if (s.k_index != null) kIndexToSnippet[s.k_index] = s.snippet || ''
+    }
+  }
   const parts: React.ReactNode[] = []
   let last = 0
   let m: RegExpExecArray | null
@@ -28,9 +38,14 @@ function renderAnswer(content: string): ReactNode {
   while ((m = K_REF_RE.exec(content)) !== null) {
     if (m.index > last) parts.push(content.slice(last, m.index))
     const idx = Number(m[1])
-    // 纯展示高亮, 不绑定跳转行为
+    const tip = kIndexToSnippet[idx]
+    // 纯展示高亮; tooltip 显示对应原文片段, 清晰区分"原文引用"与"模型新增内容"。
     parts.push(
-      <span key={`k-${m.index}`} className="k-ref">
+      <span
+        key={`k-${m.index}`}
+        className="k-ref"
+        title={tip ? `原文：${tip}` : undefined}
+      >
         [K{idx}]
       </span>
     )
@@ -380,20 +395,7 @@ export default function Sessions() {
                       {new Date(msg.created_at).toLocaleTimeString()}
                     </span>
                   </div>
-                  {renderAnswer(msg.content)}
-                  {msg.role === 'assistant' && msg.grounded === false && (
-                    <div className="grounded-warning">
-                      <div className="gw-title">⚠️ 部分内容未经知识库佐证</div>
-                      {msg.unsupported_claims && msg.unsupported_claims.length > 0 && (
-                        <ul className="gw-list">
-                          {msg.unsupported_claims.map((c, i) => (
-                            <li key={i}>{c}</li>
-                          ))}
-                        </ul>
-                      )}
-                      <div className="gw-hint">已自动剔除/修正无法被知识库支撑的陈述，仍建议谨慎采信。</div>
-                    </div>
-                  )}
+                  {renderAnswer(msg.content, msg.sources)}
                   {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (() => {
                     // 只展示回答中真正被 [K编号] 引用的来源, 让引用精确对应需求内容;
                     // 若回答里没有任何 [K编号](异常/纯直答), 退回展示全部来源以免信息丢失。
@@ -407,12 +409,18 @@ export default function Sessions() {
                     if (shown.length === 0) return null
                     return (
                       <div className="message-sources">
-                        <div className="sources-title">引用来源：</div>
+                        <div className="sources-title">引用来源（「」内为知识库原文）：</div>
                         {shown.map((source, index) => (
                           <div key={index} className="source-item">
                             <Tag color="blue">{source.k_index != null ? `[K${source.k_index}]` : `来源${index + 1}`}</Tag>
                             <span className="source-name">{source.doc_name || `doc ${source.doc_id}`}</span>
-                            <span className="source-snippet" title={source.snippet || ''}>{source.snippet}</span>
+                            <span
+                              className="source-snippet"
+                              style={{ display: 'block', marginTop: 4, padding: '4px 8px', background: '#f6f8fa', borderLeft: '3px solid #1890ff', borderRadius: 4, color: '#333', fontSize: 12, whiteSpace: 'pre-wrap' }}
+                              title={source.snippet || ''}
+                            >
+                              {source.snippet ? `「${source.snippet}」` : ''}
+                            </span>
                           </div>
                         ))}
                       </div>
